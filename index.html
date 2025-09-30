@@ -3,154 +3,277 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>ADM Map Plotter</title>
+<title>ADM Map Viewer (Zoom + Pan)</title>
 <style>
   :root{--bg:#0f1720;--panel:#0b1220;--muted:#9aa4b2;--accent:#7dd3fc;--danger:#ff4d4d}
   html,body{height:100%;margin:0;font-family:Inter,ui-sans-serif,system-ui,Segoe UI,Roboto,"Helvetica Neue",Arial}
-  body{background:linear-gradient(180deg,#071021 0%,var(--bg) 100%);color:#e6eef6;display:flex;flex-direction:column;align-items:center;padding:28px}
+  body{background:linear-gradient(180deg,#071021 0%,var(--bg) 100%);color:#e6eef6;display:flex;flex-direction:column;align-items:center;padding:20px}
   .wrap{width:min(1200px,95%)}
-  header{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:18px}
+  header{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px}
   h1{margin:0;font-size:1.25rem}
   .controls{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
   input[type=file]{display:none}
-  .btn{background:transparent;border:1px solid rgba(255,255,255,0.06);padding:10px 12px;border-radius:8px;cursor:pointer;color:inherit}
-  .panel{background:var(--panel);padding:16px;border-radius:10px;border:1px solid rgba(255,255,255,0.06)}
-  .small{font-size:0.9rem;color:var(--muted)}
-  select{padding:8px;border-radius:8px;border:1px solid rgba(255,255,255,0.08);background:transparent;color:inherit}
-  .map-wrap{position:relative;width:100%;border-radius:12px;overflow:hidden;border:1px solid rgba(255,255,255,0.06);background:#000}
-  .map-wrap img{display:block;width:100%;height:auto}
-  .marker{position:absolute;width:10px;height:10px;background:var(--danger);border:1px solid rgba(255,255,255,0.7);border-radius:50%;transform:translate(-50%,-50%);box-shadow:0 0 0 2px rgba(255,77,77,0.25)}
-  .tooltip{position:absolute;left:50%;transform:translateX(-50%);top:-10px;translate:0 -8px;background:rgba(0,0,0,0.75);padding:5px 8px;border-radius:6px;font-size:12px;white-space:nowrap;pointer-events:none;opacity:0;transition:opacity .12s}
-  .marker:hover .tooltip{opacity:1}
+  .btn{background:transparent;border:1px solid rgba(255,255,255,0.06);padding:8px 12px;border-radius:8px;cursor:pointer;color:inherit}
+  select{padding:6px;border-radius:6px;background:var(--panel);color:inherit;border:1px solid rgba(255,255,255,0.08)}
+  .panel{background:var(--panel);padding:12px;border-radius:10px;border:1px solid rgba(255,255,255,0.03)}
+  /* Map viewport */
+  .viewport{position:relative;height:75vh;min-height:420px;border-radius:12px;border:1px solid rgba(255,255,255,0.06);overflow:hidden;background:#000;user-select:none;touch-action:none}
+  /* Stage holds the image and markers and is transformed (pan/zoom) */
+  .stage{position:absolute;left:0;top:0;transform-origin:0 0}
+  .stage img{display:block}
+  /* Marker layer sits on top with the same pixel size as the image */
+  .markers{position:absolute;left:0;top:0}
+  .dot{position:absolute;width:10px;height:10px;background:var(--danger);border:1px solid rgba(255,255,255,0.7);border-radius:50%;transform:translate(-50%,-50%);pointer-events:auto}
+  .dot:hover::after{content:attr(data-info);position:absolute;top:-28px;left:50%;transform:translateX(-50%);background:rgba(0,0,0,0.85);color:#fff;padding:4px 8px;border-radius:6px;font-size:0.75rem;white-space:nowrap;pointer-events:none}
+  /* Small HUD buttons */
+  .hud{position:absolute;right:10px;top:10px;display:flex;gap:6px;z-index:5}
+  .hud .btn{padding:6px 8px;border-radius:8px}
 </style>
 </head>
 <body>
   <div class="wrap">
     <header>
-      <h1>ADM Map Plotter</h1>
+      <h1>ADM Map Viewer</h1>
       <div class="controls">
-        <label class="btn" id="chooseFileBtn">📁 Upload ADM</label>
-        <input id="fileInput" type="file" accept=".adm,.log,.txt"/>
-        <span id="status" class="small">No file loaded</span>
+        <label class="btn">📁 Upload ADM<input type="file" id="fileInput" accept=".txt,.log,.adm"/></label>
+        <select id="timestampSelect"></select>
+        <button class="btn" id="fitBtn" title="Fit to screen">Fit</button>
+        <button class="btn" id="resetBtn" title="Reset pan/zoom">Reset</button>
       </div>
     </header>
 
-    <div class="panel" style="margin-bottom:12px">
-      <label class="small">Timestamp
-        <select id="timestampSelect"></select>
-      </label>
-      <span id="summary" class="small" style="margin-left:10px">Players: 0</span>
-    </div>
+    <div class="viewport panel" id="viewport">
+      <div class="hud">
+        <button class="btn" id="zoomInBtn" title="Zoom In">＋</button>
+        <button class="btn" id="zoomOutBtn" title="Zoom Out">－</button>
+      </div>
 
-    <div class="map-wrap" id="mapWrap">
-      <img id="mapImg" src="map.jpg" alt="Map"/>
+      <!-- Stage (pans/zooms via CSS transform) -->
+      <div class="stage" id="stage">
+        <img id="map" src="map.jpg" alt="Map"/>
+        <div class="markers" id="markers"></div>
+      </div>
     </div>
   </div>
 
 <script>
 (() => {
-  const WORLD = 12800;           // hard-coded world extent
-  const MINX = 0, MAXX = 12800;  // left -> right
-  const MINZ = 0, MAXZ = 12800;  // bottom -> top
+  // --- Hard-coded world & coord order (X, Z, Y) ---
+  const WORLD = 12800;
 
+  // Elements
   const fileInput = document.getElementById('fileInput');
-  const chooseFileBtn = document.getElementById('chooseFileBtn');
-  const statusEl = document.getElementById('status');
-  const timestampSelect = document.getElementById('timestampSelect');
-  const summary = document.getElementById('summary');
-  const mapWrap = document.getElementById('mapWrap');
-  const mapImg = document.getElementById('mapImg');
+  const tsSelect = document.getElementById('timestampSelect');
+  const viewport = document.getElementById('viewport');
+  const stage = document.getElementById('stage');
+  const mapImg = document.getElementById('map');
+  const markers = document.getElementById('markers');
+  const fitBtn = document.getElementById('fitBtn');
+  const resetBtn = document.getElementById('resetBtn');
+  const zoomInBtn = document.getElementById('zoomInBtn');
+  const zoomOutBtn = document.getElementById('zoomOutBtn');
 
-  let snapshots = new Map();
+  // Data
+  let snapshots = new Map();      // time -> [{name,id,x,z,y}]
   let orderedTimestamps = [];
+  let imgW = 0, imgH = 0;         // natural image pixels
 
-  chooseFileBtn.addEventListener('click', () => fileInput.click());
-  fileInput.addEventListener('change', e => {
-    if (e.target.files && e.target.files[0]) handleFile(e.target.files[0]);
-  });
+  // View transform
+  let scale = 1;
+  let tx = 0, ty = 0;             // translation in pixels (stage transform)
+  const MIN_SCALE = 0.2;
+  const MAX_SCALE = 8;
 
-  timestampSelect.addEventListener('change', () => renderTimestamp(timestampSelect.value));
-  mapImg.addEventListener('load', () => { if (timestampSelect.value) renderTimestamp(timestampSelect.value); });
-  window.addEventListener('resize', () => { if (timestampSelect.value) renderTimestamp(timestampSelect.value); });
+  // Regex for ADM line with X, Z, Y order
+  const lineRe =
+  /^(?<time>\d{2}:\d{2}:\d{2})\s*\|\s*Player\s+"(?<name>.+?)"\s*\(id=(?<id>\d+)\s+pos=<\s*(?<x>[-+\d.]+)\s*,\s*(?<z>[-+\d.]+)\s*,\s*(?<y>[-+\d.]+)\s*>\)/i;
 
-  function handleFile(file) {
-    const reader = new FileReader();
-    reader.onload = () => {
-      parseADM(String(reader.result || ''));
-      populateTimestamps();
-      statusEl.textContent = `Loaded: ${file.name}`;
-      if (orderedTimestamps.length) {
-        timestampSelect.value = orderedTimestamps[0];
-        renderTimestamp(orderedTimestamps[0]);
-      }
-    };
-    reader.onerror = () => alert('Failed to read file');
-    reader.readAsText(file);
-  }
-
-  const lineRe = /^(?<time>\d{2}:\d{2}:\d{2})\s*\|\s*Player\s+"(?<name>.+?)"\s*\(id=(?<id>\d+)\s+pos=<\s*(?<x>[-+\d.]+)\s*,\s*(?<y>[-+\d.]+)\s*,\s*(?<z>[-+\d.]+)\s*>\)/i;
-
-  function parseADM(text) {
-    snapshots = new Map();
-    orderedTimestamps = [];
-    for (const raw of text.split(/\r?\n/)) {
-      const line = raw.trim();
-      if (!line) continue;
-      const m = line.match(lineRe);
-      if (!m) continue;
-      const { time, name, id, x, y, z } = m.groups;
-      if (!snapshots.has(time)) { snapshots.set(time, []); orderedTimestamps.push(time); }
-      snapshots.get(time).push({ name, id, x: +x, y: +y, z: +z });
+  // ---------- Parsing ----------
+  function parseADM(text){
+    snapshots.clear(); orderedTimestamps=[];
+    const lines = text.split(/\r?\n/);
+    for(const raw of lines){
+      const m = raw.match(lineRe);
+      if(!m) continue;
+      const { time, name, id, x, z, y } = m.groups;
+      if(!snapshots.has(time)){ snapshots.set(time, []); orderedTimestamps.push(time); }
+      snapshots.get(time).push({ name, id, x:+x, z:+z, y:+y });
     }
   }
 
-  function populateTimestamps() {
-    timestampSelect.innerHTML = '';
-    if (!orderedTimestamps.length) {
-      const opt = document.createElement('option');
-      opt.value = ''; opt.textContent = 'No timestamps found';
-      timestampSelect.appendChild(opt);
-      summary.textContent = 'Players: 0';
+  function populateTimestamps(){
+    tsSelect.innerHTML = '';
+    if(!orderedTimestamps.length){
+      const o = document.createElement('option');
+      o.value=''; o.textContent='No timestamps found';
+      tsSelect.appendChild(o);
       return;
     }
-    for (const t of orderedTimestamps) {
-      const opt = document.createElement('option');
-      opt.value = t; opt.textContent = t;
-      timestampSelect.appendChild(opt);
+    for(const t of orderedTimestamps){
+      const o = document.createElement('option');
+      const count = snapshots.get(t).length;
+      o.value = t; o.textContent = `${t} (${count})`;
+      tsSelect.appendChild(o);
     }
   }
 
-  function renderTimestamp(ts) {
-    const players = snapshots.get(ts) || [];
-    summary.textContent = `Players: ${players.length}`;
-    [...mapWrap.querySelectorAll('.marker')].forEach(el => el.remove());
-
-    const spanX = (MAXX - MINX) || 1;
-    const spanZ = (MAXZ - MINZ) || 1;
-
-    for (const p of players) {
-      // clamp to bounds just in case
-      const x = Math.min(MAXX, Math.max(MINX, p.x));
-      const z = Math.min(MAXZ, Math.max(MINZ, p.z));
-
-      const nx = (x - MINX) / spanX;          // 0..1 left→right
-      const nz = (z - MINZ) / spanZ;          // 0..1 bottom→top
-      const leftPct = nx * 100;
-      const topPct  = (1 - nz) * 100;         // browser top=0 at top, so invert
-
-      const dot = document.createElement('div');
-      dot.className = 'marker';
-      dot.style.left = leftPct + '%';
-      dot.style.top  = topPct  + '%';
-
-      const tip = document.createElement('div');
-      tip.className = 'tooltip';
-      tip.textContent = `${p.name} @ <${p.x.toFixed(1)}, ${p.z.toFixed(1)}> id=${p.id}`;
-      dot.appendChild(tip);
-
-      mapWrap.appendChild(dot);
-    }
+  // ---------- Mapping world → image pixels ----------
+  function worldToImagePx(p){
+    // x: 0..WORLD → 0..imgW
+    // z: 0..WORLD (bottom→top) → y pixels from top = imgH - (z/WORLD)*imgH
+    const xpx = (p.x / WORLD) * imgW;
+    const ypx = imgH - (p.z / WORLD) * imgH;
+    return { xpx, ypx };
   }
+
+  function renderDots(players){
+    markers.innerHTML = '';
+    markers.style.width = imgW + 'px';
+    markers.style.height = imgH + 'px';
+    for(const p of players){
+      const { xpx, ypx } = worldToImagePx(p);
+      const d = document.createElement('div');
+      d.className = 'dot';
+      d.style.left = xpx + 'px';
+      d.style.top  = ypx + 'px';
+      d.setAttribute('data-info', `${p.name} (${p.x.toFixed(1)}, ${p.z.toFixed(1)})`);
+      markers.appendChild(d);
+    }
+    applyTransform(); // keep current pan/zoom
+  }
+
+  // ---------- Pan & Zoom ----------
+  function applyTransform(){
+    stage.style.transform = `translate(${tx}px, ${ty}px) scale(${scale})`;
+    // Keep dot size constant in screen space: counter-scale marker dots
+    // (Markers are inside the same scaled stage. To keep constant size,
+    //  set their scale inverse using CSS variable or transform.)
+    // Simpler approach: scale the dot via CSS 'transform: translate(-50%,-50%) scale(1/scale)'
+    const inv = 1/scale;
+    markers.querySelectorAll('.dot').forEach(el=>{
+      el.style.transform = `translate(-50%,-50%) scale(${inv})`;
+    });
+  }
+
+  function fitToViewport(){
+    if(!imgW || !imgH) return;
+    const vw = viewport.clientWidth, vh = viewport.clientHeight;
+    const s = Math.min(vw/imgW, vh/imgH);
+    scale = Math.max(MIN_SCALE, Math.min(MAX_SCALE, s));
+    // center
+    tx = (vw - imgW*scale)/2;
+    ty = (vh - imgH*scale)/2;
+    applyTransform();
+  }
+
+  function resetView(){
+    scale = 1; tx = 0; ty = 0;
+    applyTransform();
+  }
+
+  function zoomAt(cx, cy, factor){
+    const oldScale = scale;
+    let newScale = scale * factor;
+    newScale = Math.max(MIN_SCALE, Math.min(MAX_SCALE, newScale));
+    const k = newScale/oldScale;
+
+    // Convert screen point to stage-local before zoom
+    const sx = (cx - tx);
+    const sy = (cy - ty);
+
+    // Adjust translate to keep the point under cursor stable
+    tx = cx - sx * k;
+    ty = cy - sy * k;
+    scale = newScale;
+    applyTransform();
+  }
+
+  // Mouse wheel zoom
+  viewport.addEventListener('wheel', (e)=>{
+    e.preventDefault();
+    const factor = (e.deltaY < 0) ? 1.15 : 1/1.15;
+    const rect = viewport.getBoundingClientRect();
+    const cx = e.clientX - rect.left;
+    const cy = e.clientY - rect.top;
+    zoomAt(cx, cy, factor);
+  }, { passive:false });
+
+  // Drag panning
+  let dragging = false, lx=0, ly=0;
+  viewport.addEventListener('mousedown', (e)=>{
+    dragging = true; lx = e.clientX; ly = e.clientY;
+  });
+  window.addEventListener('mouseup', ()=> dragging=false);
+  window.addEventListener('mousemove', (e)=>{
+    if(!dragging) return;
+    const dx = e.clientX - lx, dy = e.clientY - ly;
+    lx = e.clientX; ly = e.clientY;
+    tx += dx; ty += dy;
+    applyTransform();
+  });
+
+  // Touch support (simple)
+  let touchId = null;
+  viewport.addEventListener('touchstart', (e)=>{
+    if(e.touches.length===1){ touchId = e.touches[0].identifier; lx=e.touches[0].clientX; ly=e.touches[0].clientY; }
+  }, {passive:false});
+  viewport.addEventListener('touchmove', (e)=>{
+    if(e.touches.length!==1 || touchId===null) return;
+    const t = [...e.touches].find(t=>t.identifier===touchId); if(!t) return;
+    const dx = t.clientX - lx, dy = t.clientY - ly;
+    lx = t.clientX; ly = t.clientY;
+    tx += dx; ty += dy; applyTransform();
+  }, {passive:false});
+  viewport.addEventListener('touchend', ()=>{ touchId=null; }, {passive:false});
+
+  // Double click = reset
+  viewport.addEventListener('dblclick', ()=> fitToViewport());
+
+  // HUD buttons
+  fitBtn.addEventListener('click', fitToViewport);
+  resetBtn.addEventListener('click', resetView);
+  zoomInBtn.addEventListener('click', ()=>{
+    const rect = viewport.getBoundingClientRect();
+    zoomAt(rect.width/2, rect.height/2, 1.2);
+  });
+  zoomOutBtn.addEventListener('click', ()=>{
+    const rect = viewport.getBoundingClientRect();
+    zoomAt(rect.width/2, rect.height/2, 1/1.2);
+  });
+
+  // ---------- Wiring ----------
+  tsSelect.addEventListener('change', ()=>{
+    const t = tsSelect.value;
+    renderDots(snapshots.get(t)||[]);
+  });
+
+  fileInput.addEventListener('change', e=>{
+    if(!e.target.files[0]) return;
+    const reader = new FileReader();
+    reader.onload = ()=>{
+      parseADM(reader.result);
+      populateTimestamps();
+      if(orderedTimestamps.length){
+        tsSelect.value = orderedTimestamps[0];
+        renderDots(snapshots.get(orderedTimestamps[0]));
+        fitToViewport();
+      }
+    };
+    reader.readAsText(e.target.files[0]);
+  });
+
+  // Once the image is loaded, capture its natural size for precise mapping
+  mapImg.addEventListener('load', ()=>{
+    // Use naturalWidth/Height for accurate pixel mapping
+    imgW = mapImg.naturalWidth || mapImg.width;
+    imgH = mapImg.naturalHeight || mapImg.height;
+    // Size stage to the image's intrinsic pixels so markers align perfectly
+    stage.style.width = imgW + 'px';
+    stage.style.height = imgH + 'px';
+    markers.style.width = imgW + 'px';
+    markers.style.height = imgH + 'px';
+    fitToViewport();
+  });
 })();
 </script>
 </body>
