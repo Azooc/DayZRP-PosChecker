@@ -1,0 +1,209 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>ADM Map Plotter</title>
+<style>
+  :root{--bg:#0f1720;--panel:#0b1220;--muted:#9aa4b2;--accent:#7dd3fc;--ok:#0f3;--danger:#ff4d4d}
+  html,body{height:100%;margin:0;font-family:Inter,ui-sans-serif,system-ui,Segoe UI,Roboto,"Helvetica Neue",Arial}
+  body{background:linear-gradient(180deg,#071021 0%,var(--bg) 100%);color:#e6eef6;display:flex;flex-direction:column;align-items:center;padding:28px}
+  .wrap{width:min(1200px,95%)}
+  header{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:18px}
+  h1{margin:0;font-size:1.25rem}
+  .controls{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+  input[type=file]{display:none}
+  .btn{background:transparent;border:1px solid rgba(255,255,255,0.06);padding:10px 12px;border-radius:8px;cursor:pointer;color:inherit}
+  .panel{background:var(--panel);padding:16px;border-radius:10px;border:1px solid rgba(255,255,255,0.06)}
+  .muted{color:var(--muted)}
+  .small{font-size:0.9rem;color:var(--muted)}
+  .drop{border:2px dashed rgba(255,255,255,0.06);padding:16px;border-radius:10px;background:linear-gradient(180deg,rgba(255,255,255,0.02),transparent);text-align:center}
+  .drop.drag{border-color:var(--accent);box-shadow:0 6px 18px rgba(0,0,0,0.6)}
+  .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+  select, input[type=number]{padding:8px;border-radius:8px;border:1px solid rgba(255,255,255,0.08);background:transparent;color:inherit}
+  .map-wrap{position:relative;width:100%;border-radius:12px;overflow:hidden;border:1px solid rgba(255,255,255,0.06)}
+  .map-wrap img{display:block;width:100%;height:auto}
+  .marker{position:absolute;width:10px;height:10px;background:var(--danger);border:1px solid rgba(255,255,255,0.7);border-radius:50%;transform:translate(-50%,-50%);box-shadow:0 0 0 2px rgba(255,77,77,0.25)}
+  .tooltip{position:absolute;left:50%;transform:translateX(-50%);top:-10px;translate:0 -8px;background:rgba(0,0,0,0.75);padding:5px 8px;border-radius:6px;font-size:12px;white-space:nowrap;pointer-events:none;opacity:0;transition:opacity .12s}
+  .marker:hover .tooltip{opacity:1}
+  .pill{display:inline-block;padding:4px 10px;border-radius:999px;background:rgba(125,211,252,0.12);border:1px solid rgba(125,211,252,0.25);font-size:0.85rem}
+  .grid{display:grid;grid-template-columns:1fr;gap:12px}
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <h1>ADM Map Plotter</h1>
+      <div class="controls">
+        <label class="btn" id="chooseFileBtn">📁 Upload ADM</label>
+        <input id="fileInput" type="file" accept=".adm,.log,.txt"/>
+        <span id="status" class="small">No file loaded</span>
+      </div>
+    </header>
+
+    <div class="panel drop" id="dropZone">
+      Drag & drop your ADM file here — or click <strong>Upload ADM</strong>.
+    </div>
+
+    <div class="panel grid" style="margin-top:12px">
+      <div class="row">
+        <label class="small">Timestamp
+          <select id="timestampSelect"></select>
+        </label>
+        <span class="pill" id="summary">Players: 0</span>
+        <span class="small">World size (meters):</span>
+        <input id="worldSize" type="number" value="15360" min="1000" step="10" title="Map width/height in meters"/>
+        <span class="small">Map image:</span>
+        <input id="mapUrl" type="text" style="min-width:240px" placeholder="map.jpg" value="map.jpg" title="Path/URL to map image"/>
+        <button class="btn" id="loadMapBtn">Load Map</button>
+      </div>
+      <div class="map-wrap" id="mapWrap">
+        <img id="mapImg" src="map.jpg" alt="Map"/>
+        <!-- markers go here -->
+      </div>
+    </div>
+
+    <p class="small muted" style="margin-top:10px">
+      Notes: uses X & Z from <span class="mono">pos=&lt;X, Y, Z&gt;</span>. Positions are scaled as percentages of the world size (default 15360 m).
+    </p>
+  </div>
+
+<script>
+(() => {
+  const fileInput = document.getElementById('fileInput');
+  const chooseFileBtn = document.getElementById('chooseFileBtn');
+  const dropZone = document.getElementById('dropZone');
+  const timestampSelect = document.getElementById('timestampSelect');
+  const summary = document.getElementById('summary');
+  const statusEl = document.getElementById('status');
+  const mapWrap = document.getElementById('mapWrap');
+  const mapImg = document.getElementById('mapImg');
+  const worldSizeEl = document.getElementById('worldSize');
+  const mapUrlEl = document.getElementById('mapUrl');
+  const loadMapBtn = document.getElementById('loadMapBtn');
+
+  let snapshots = new Map(); // timestamp -> [{name,id,x,z,y}]
+  let orderedTimestamps = []; // to preserve order
+
+  chooseFileBtn.addEventListener('click', () => fileInput.click());
+  fileInput.addEventListener('change', e => {
+    if (e.target.files && e.target.files[0]) handleFile(e.target.files[0]);
+  });
+
+  dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('drag'); });
+  dropZone.addEventListener('dragleave', e => { e.preventDefault(); dropZone.classList.remove('drag'); });
+  dropZone.addEventListener('drop', e => {
+    e.preventDefault(); dropZone.classList.remove('drag');
+    if (e.dataTransfer.files && e.dataTransfer.files[0]) handleFile(e.dataTransfer.files[0]);
+  });
+
+  loadMapBtn.addEventListener('click', () => {
+    const url = mapUrlEl.value.trim() || 'map.jpg';
+    mapImg.src = url;
+  });
+
+  timestampSelect.addEventListener('change', () => {
+    renderTimestamp(timestampSelect.value);
+  });
+
+  mapImg.addEventListener('load', () => {
+    // re-render markers on new map image or resize
+    if (timestampSelect.value) renderTimestamp(timestampSelect.value);
+  });
+
+  window.addEventListener('resize', () => {
+    if (timestampSelect.value) renderTimestamp(timestampSelect.value);
+  });
+
+  function handleFile(file) {
+    const reader = new FileReader();
+    reader.onload = () => {
+      parseADM(String(reader.result || ''));
+      populateTimestamps();
+      statusEl.textContent = `Loaded: ${file.name}`;
+      if (orderedTimestamps.length) {
+        timestampSelect.value = orderedTimestamps[0];
+        renderTimestamp(orderedTimestamps[0]);
+      }
+    };
+    reader.onerror = () => alert('Failed to read file');
+    reader.readAsText(file);
+  }
+
+  const lineRe = /^(?<time>\d{2}:\d{2}:\d{2})\s*\|\s*Player\s+"(?<name>.+?)"\s*\(id=(?<id>\d+)\s+pos=<\s*(?<x>[-+\d.]+)\s*,\s*(?<y>[-+\d.]+)\s*,\s*(?<z>[-+\d.]+)\s*>\)/i;
+
+  function parseADM(text) {
+    snapshots = new Map();
+    orderedTimestamps = [];
+    const lines = text.split(/\r?\n/);
+    for (const raw of lines) {
+      const line = raw.trim();
+      if (!line) continue;
+      const m = line.match(lineRe);
+      if (!m) continue;
+      const { time, name, id, x, y, z } = m.groups;
+      if (!snapshots.has(time)) {
+        snapshots.set(time, []);
+        orderedTimestamps.push(time);
+      }
+      snapshots.get(time).push({
+        name, id,
+        x: parseFloat(x),
+        y: parseFloat(y),
+        z: parseFloat(z)
+      });
+    }
+  }
+
+  function populateTimestamps() {
+    timestampSelect.innerHTML = '';
+    if (!orderedTimestamps.length) {
+      const opt = document.createElement('option');
+      opt.value = '';
+      opt.textContent = 'No timestamps found';
+      timestampSelect.appendChild(opt);
+      summary.textContent = 'Players: 0';
+      return;
+    }
+    for (const t of orderedTimestamps) {
+      const opt = document.createElement('option');
+      opt.value = t;
+      opt.textContent = t;
+      timestampSelect.appendChild(opt);
+    }
+  }
+
+  function renderTimestamp(ts) {
+    const players = snapshots.get(ts) || [];
+    summary.textContent = `Players: ${players.length}`;
+    // remove old markers
+    [...mapWrap.querySelectorAll('.marker')].forEach(el => el.remove());
+
+    const worldSize = Math.max(1, Number(worldSizeEl.value || 15360)); // meters
+    // Position markers in percentage space so resizing stays correct
+    for (const p of players) {
+      const leftPct = (p.x / worldSize) * 100; // X → left
+      const topPct  = (p.z / worldSize) * 100; // Z → top (downwards)
+
+      const dot = document.createElement('div');
+      dot.className = 'marker';
+      dot.style.left = leftPct + '%';
+      dot.style.top  = topPct  + '%';
+
+      const tip = document.createElement('div');
+      tip.className = 'tooltip';
+      tip.textContent = `${p.name} @ <${p.x.toFixed(1)}, ${p.z.toFixed(1)}> id=${p.id}`;
+      dot.appendChild(tip);
+
+      mapWrap.appendChild(dot);
+    }
+  }
+
+  // Initial map load hook for custom URL
+  (function init(){
+    mapImg.addEventListener('error', () => { /* ignore load error to avoid UI noise */ });
+  })();
+})();
+</script>
+</body>
+</html>
