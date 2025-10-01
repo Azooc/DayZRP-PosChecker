@@ -35,6 +35,7 @@
     background:var(--danger);
     border:1px solid rgba(255,255,255,0.7);
     border-radius:50%;
+    margin:auto;
     position:absolute;
     top:50%; left:50%;
     transform:translate(-50%,-50%);
@@ -69,7 +70,7 @@
 
     <div class="viewport panel" id="viewport">
       <div class="stage" id="stage">
-        <!-- Your half-size map, e.g. 6400x6400 -->
+        <!-- Your half-size map: 6400 x 6400 -->
         <img id="map" src="map_half.jpg" alt="Map"/>
         <div class="markers" id="markers"></div>
       </div>
@@ -77,17 +78,16 @@
   </div>
 
 <script>
-(()=>{
-  const WORLD_X = 12800;
-  const WORLD_Z = 12800;
+(() => {
+  const WORLD = 12800; // world coordinates are 0..12800
 
   const fileInput = document.getElementById('fileInput');
-  const tsSelect  = document.getElementById('timestampSelect');
-  const viewport  = document.getElementById('viewport');
-  const stage     = document.getElementById('stage');
-  const mapImg    = document.getElementById('map');
-  const markers   = document.getElementById('markers');
-  const fitBtn    = document.getElementById('fitBtn');
+  const tsSelect = document.getElementById('timestampSelect');
+  const viewport = document.getElementById('viewport');
+  const stage = document.getElementById('stage');
+  const mapImg = document.getElementById('map');
+  const markers = document.getElementById('markers');
+  const fitBtn = document.getElementById('fitBtn');
 
   let snapshots = new Map();
   let orderedTimestamps = [];
@@ -128,13 +128,16 @@
   }
 
   function worldToImagePx(p){
-    const xpx = (p.x / WORLD_X) * imgW;
-    const ypx = imgH - (p.z / WORLD_Z) * imgH;
+    // Scale from world (0..12800) into image (0..imgW)
+    const xpx = (p.x / WORLD) * imgW;
+    const ypx = imgH - (p.z / WORLD) * imgH;
     return { xpx, ypx };
   }
 
   function renderDots(players){
     markers.innerHTML = '';
+    markers.style.width = imgW + 'px';
+    markers.style.height = imgH + 'px';
     for(const p of players){
       const { xpx, ypx } = worldToImagePx(p);
       const d = document.createElement('div');
@@ -200,7 +203,7 @@
     applyTransform();
   });
 
-  viewport.addEventListener('dblclick', fitToViewport);
+  viewport.addEventListener('dblclick', ()=> fitToViewport());
   fitBtn.addEventListener('click', fitToViewport);
 
   tsSelect.addEventListener('change', ()=>{
@@ -226,6 +229,10 @@
   mapImg.addEventListener('load', ()=>{
     imgW = mapImg.naturalWidth;
     imgH = mapImg.naturalHeight;
+    stage.style.width = imgW + 'px';
+    stage.style.height = imgH + 'px';
+    markers.style.width = imgW + 'px';
+    markers.style.height = imgH + 'px';
     fitToViewport();
   });
 })();
