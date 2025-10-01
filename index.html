@@ -35,7 +35,6 @@
     background:var(--danger);
     border:1px solid rgba(255,255,255,0.7);
     border-radius:50%;
-    margin:auto;
     position:absolute;
     top:50%; left:50%;
     transform:translate(-50%,-50%);
@@ -70,7 +69,7 @@
 
     <div class="viewport panel" id="viewport">
       <div class="stage" id="stage">
-        <!-- Your half-size image, e.g. 6400x6400 -->
+        <!-- Your half-size map, e.g. 6400x6400 -->
         <img id="map" src="map_half.jpg" alt="Map"/>
         <div class="markers" id="markers"></div>
       </div>
@@ -79,12 +78,8 @@
 
 <script>
 (()=>{
-  // World coordinates remain 0..12800 on each axis
   const WORLD_X = 12800;
   const WORLD_Z = 12800;
-
-  // Your image is half-size (e.g., 6400 x 6400), so 1 coord = 0.5 pixels
-  const PIXELS_PER_COORD = 0.5;
 
   const fileInput = document.getElementById('fileInput');
   const tsSelect  = document.getElementById('timestampSelect');
@@ -132,10 +127,9 @@
     }
   }
 
-  // Direct half-scale mapping: 1 coord = 0.5 px
   function worldToImagePx(p){
-    const xpx = p.x * PIXELS_PER_COORD;           // left-to-right
-    const ypx = imgH - (p.z * PIXELS_PER_COORD);  // bottom-to-top → image y (flip)
+    const xpx = (p.x / WORLD_X) * imgW;
+    const ypx = imgH - (p.z / WORLD_Z) * imgH;
     return { xpx, ypx };
   }
 
@@ -231,7 +225,7 @@
 
   mapImg.addEventListener('load', ()=>{
     imgW = mapImg.naturalWidth;
-    imgH = mapImg.naturalHeight; // should be 6400 x 6400
+    imgH = mapImg.naturalHeight;
     fitToViewport();
   });
 })();
