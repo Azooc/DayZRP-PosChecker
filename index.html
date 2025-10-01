@@ -127,16 +127,15 @@
     }
   }
 
+  // Direct mapping: 1 coord = 1 pixel
   function worldToImagePx(p){
-    const xpx = (p.x / WORLD_X) * imgW;
-    const ypx = imgH - (p.z / WORLD_Z) * imgH;
+    const xpx = p.x;
+    const ypx = imgH - p.z; // invert z so 0 is bottom
     return { xpx, ypx };
   }
 
   function renderDots(players){
     markers.innerHTML = '';
-    markers.style.width = imgW + 'px';
-    markers.style.height = imgH + 'px';
     for(const p of players){
       const { xpx, ypx } = worldToImagePx(p);
       const d = document.createElement('div');
@@ -228,10 +227,6 @@
   mapImg.addEventListener('load', ()=>{
     imgW = mapImg.naturalWidth;
     imgH = mapImg.naturalHeight;
-    stage.style.width = imgW + 'px';
-    stage.style.height = imgH + 'px';
-    markers.style.width = imgW + 'px';
-    markers.style.height = imgH + 'px';
     fitToViewport();
   });
 })();
