@@ -60,7 +60,7 @@
   let imgW = 0, imgH = 0;
 
   let scale = 1, tx = 0, ty = 0;
-  const MIN_SCALE = 0.2, MAX_SCALE = 200; // allow very deep zoom
+  const MIN_SCALE = 0.2, MAX_SCALE = 50;
 
   const lineRe =
   /^(?<time>\d{2}:\d{2}:\d{2})\s*\|\s*Player\s+"(?<name>.+?)"\s*\(id=(?<id>\d+)\s+pos=<\s*(?<x>[-+\d.]+)\s*,\s*(?<z>[-+\d.]+)\s*,\s*(?<y>[-+\d.]+)\s*>\)\s*$/i;
@@ -117,7 +117,7 @@
 
   function applyTransform(){
     stage.style.transform = `translate(${tx}px, ${ty}px) scale(${scale})`;
-    const inv = 1/(scale*2); // shrink more when zoomed in
+    const inv = 1/scale;
     markers.querySelectorAll('.dot').forEach(el=>{
       el.style.transform = `translate(-50%,-50%) scale(${inv})`;
     });
