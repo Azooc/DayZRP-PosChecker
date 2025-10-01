@@ -55,9 +55,24 @@
     pointer-events:none;
     z-index:1000;
   }
-  .offset-controls{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
-  .offset-controls label{font-size:0.8rem;color:var(--muted);display:flex;flex-direction:column;align-items:flex-start}
-  .offset-controls input{width:70px}
+  .radiusCircle {
+    position:absolute;
+    border-radius:50%;
+    background:rgba(125,211,252,0.15);
+    border:1px dashed var(--accent);
+    transform:translate(-50%,-50%);
+    pointer-events:none;
+  }
+  #radiusPanel {
+    display:none;
+    margin-bottom:12px;
+  }
+  #radiusResults {
+    font-size:0.9rem;
+    margin-top:6px;
+    max-height:120px;
+    overflow:auto;
+  }
 </style>
 </head>
 <body>
@@ -71,17 +86,30 @@
       </div>
     </header>
 
-    <div class="panel offset-controls">
-      <label>Offset X <input type="number" id="offsetX" step="1" value="0"></label>
-      <label>Offset Z <input type="number" id="offsetZ" step="1" value="0"></label>
-      <label>Scale X <input type="number" id="scaleX" step="0.01" value="1"></label>
-      <label>Scale Z <input type="number" id="scaleZ" step="0.01" value="1"></label>
+    <div id="radiusPanel" class="panel">
+      <label>Radius:
+        <select id="radiusSelect">
+          <option value="50">50</option>
+          <option value="100">100</option>
+          <option value="200">200</option>
+          <option value="300">300</option>
+          <option value="400">400</option>
+          <option value="500">500</option>
+          <option value="600">600</option>
+          <option value="700">700</option>
+          <option value="800">800</option>
+          <option value="900">900</option>
+          <option value="1000">1000</option>
+        </select>
+      </label>
+      <div id="radiusResults"></div>
     </div>
 
     <div class="viewport panel" id="viewport">
       <div class="stage" id="stage">
         <img id="map" src="map.jpg" alt="Map"/>
         <div class="markers" id="markers"></div>
+        <div id="radiusCircle" class="radiusCircle"></div>
       </div>
     </div>
   </div>
@@ -98,10 +126,10 @@
   const markers = document.getElementById('markers');
   const fitBtn = document.getElementById('fitBtn');
 
-  const offsetXInput = document.getElementById('offsetX');
-  const offsetZInput = document.getElementById('offsetZ');
-  const scaleXInput = document.getElementById('scaleX');
-  const scaleZInput = document.getElementById('scaleZ');
+  const radiusPanel = document.getElementById('radiusPanel');
+  const radiusSelect = document.getElementById('radiusSelect');
+  const radiusResults = document.getElementById('radiusResults');
+  const radiusCircle = document.getElementById('radiusCircle');
 
   let snapshots = new Map();
   let orderedTimestamps = [];
@@ -109,6 +137,9 @@
 
   let scale = 1, tx = 0, ty = 0;
   const MIN_SCALE = 0.001, MAX_SCALE = 200;
+
+  let currentPlayers = [];
+  let selectedPlayer = null;
 
   const lineRe =
   /^(?<time>\d{2}:\d{2}:\d{2})\s*\|\s*Player\s+"(?<name>.+?)"\s*\(id=(?<id>\d+)\s+pos=<\s*(?<x>[-+\d.]+)\s*,\s*(?<z>[-+\d.]+)\s*,\s*(?<y>[-+\d.]+)\s*>\)\s*$/i;
@@ -142,17 +173,13 @@
   }
 
   function worldToImagePx(p){
-    const offsetX = parseFloat(offsetXInput.value)||0;
-    const offsetZ = parseFloat(offsetZInput.value)||0;
-    const scaleX = parseFloat(scaleXInput.value)||1;
-    const scaleZ = parseFloat(scaleZInput.value)||1;
-
-    const xpx = ((p.x - offsetX) / (WORLD * scaleX)) * imgW;
-    const ypx = imgH - ((p.z - offsetZ) / (WORLD * scaleZ)) * imgH;
+    const xpx = (p.x / WORLD) * imgW;
+    const ypx = imgH - (p.z / WORLD) * imgH;
     return { xpx, ypx };
   }
 
   function renderDots(players){
+    currentPlayers = players;
     markers.innerHTML = '';
     markers.style.width = imgW + 'px';
     markers.style.height = imgH + 'px';
@@ -163,8 +190,44 @@
       d.style.left = xpx + 'px';
       d.style.top  = ypx + 'px';
       d.setAttribute('data-info', `${p.name} (${p.x.toFixed(1)}, ${p.z.toFixed(1)})`);
+      d.addEventListener('click', (e)=> {
+        e.stopPropagation();
+        selectPlayer(p, xpx, ypx);
+      });
       markers.appendChild(d);
     }
+    applyTransform();
+  }
+
+  function selectPlayer(player, xpx, ypx){
+    selectedPlayer = player;
+    radiusPanel.style.display = 'block';
+    updateRadiusDisplay();
+  }
+
+  function updateRadiusDisplay(){
+    if(!selectedPlayer) return;
+    const r = parseFloat(radiusSelect.value);
+    const { xpx, ypx } = worldToImagePx(selectedPlayer);
+
+    const radiusPx = (r / WORLD) * imgW;
+    radiusCircle.style.display = 'block';
+    radiusCircle.style.left = xpx + 'px';
+    radiusCircle.style.top  = ypx + 'px';
+    radiusCircle.style.width = (radiusPx*2) + 'px';
+    radiusCircle.style.height= (radiusPx*2) + 'px';
+
+    const inside = [];
+    for(const p of currentPlayers){
+      if(p===selectedPlayer) continue;
+      const dx = p.x - selectedPlayer.x;
+      const dz = p.z - selectedPlayer.z;
+      const dist = Math.sqrt(dx*dx + dz*dz);
+      if(dist <= r){
+        inside.push(`${p.name} (${dist.toFixed(1)})`);
+      }
+    }
+    radiusResults.innerHTML = inside.length ? inside.join('<br>') : '<em>No players inside</em>';
     applyTransform();
   }
 
@@ -174,6 +237,9 @@
     markers.querySelectorAll('.dot').forEach(el=>{
       el.style.transform = `translate(-50%,-50%) scale(${inv})`;
     });
+    if(radiusCircle.style.display!=='none'){
+      radiusCircle.style.transform = `translate(-50%,-50%) scale(${1/scale})`;
+    }
   }
 
   function fitToViewport(){
@@ -229,12 +295,7 @@
     renderDots(snapshots.get(t)||[]);
   });
 
-  [offsetXInput, offsetZInput, scaleXInput, scaleZInput].forEach(input=>{
-    input.addEventListener('input', ()=>{
-      const t = tsSelect.value;
-      renderDots(snapshots.get(t)||[]);
-    });
-  });
+  radiusSelect.addEventListener('change', updateRadiusDisplay);
 
   fileInput.addEventListener('change', e=>{
     if(!e.target.files[0]) return;
