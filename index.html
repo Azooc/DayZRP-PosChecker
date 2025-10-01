@@ -70,24 +70,29 @@
 
     <div class="viewport panel" id="viewport">
       <div class="stage" id="stage">
-        <img id="map" src="map.jpg" alt="Map"/>
+        <!-- Your half-size image, e.g. 6400x6400 -->
+        <img id="map" src="map_half.jpg" alt="Map"/>
         <div class="markers" id="markers"></div>
       </div>
     </div>
   </div>
 
 <script>
-(() => {
+(()=>{
+  // World coordinates remain 0..12800 on each axis
   const WORLD_X = 12800;
   const WORLD_Z = 12800;
 
+  // Your image is half-size (e.g., 6400 x 6400), so 1 coord = 0.5 pixels
+  const PIXELS_PER_COORD = 0.5;
+
   const fileInput = document.getElementById('fileInput');
-  const tsSelect = document.getElementById('timestampSelect');
-  const viewport = document.getElementById('viewport');
-  const stage = document.getElementById('stage');
-  const mapImg = document.getElementById('map');
-  const markers = document.getElementById('markers');
-  const fitBtn = document.getElementById('fitBtn');
+  const tsSelect  = document.getElementById('timestampSelect');
+  const viewport  = document.getElementById('viewport');
+  const stage     = document.getElementById('stage');
+  const mapImg    = document.getElementById('map');
+  const markers   = document.getElementById('markers');
+  const fitBtn    = document.getElementById('fitBtn');
 
   let snapshots = new Map();
   let orderedTimestamps = [];
@@ -127,10 +132,10 @@
     }
   }
 
-  // Direct mapping: 1 coord = 1 pixel
+  // Direct half-scale mapping: 1 coord = 0.5 px
   function worldToImagePx(p){
-    const xpx = p.x;
-    const ypx = imgH - p.z; // invert z so 0 is bottom
+    const xpx = p.x * PIXELS_PER_COORD;           // left-to-right
+    const ypx = imgH - (p.z * PIXELS_PER_COORD);  // bottom-to-top → image y (flip)
     return { xpx, ypx };
   }
 
@@ -201,7 +206,7 @@
     applyTransform();
   });
 
-  viewport.addEventListener('dblclick', ()=> fitToViewport());
+  viewport.addEventListener('dblclick', fitToViewport);
   fitBtn.addEventListener('click', fitToViewport);
 
   tsSelect.addEventListener('change', ()=>{
@@ -226,7 +231,7 @@
 
   mapImg.addEventListener('load', ()=>{
     imgW = mapImg.naturalWidth;
-    imgH = mapImg.naturalHeight;
+    imgH = mapImg.naturalHeight; // should be 6400 x 6400
     fitToViewport();
   });
 })();
