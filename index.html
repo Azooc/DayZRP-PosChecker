@@ -20,27 +20,24 @@
   .stage{position:absolute;left:0;top:0;transform-origin:0 0}
   .stage img{display:block}
   .markers{position:absolute;left:0;top:0}
-  .dot{
+  .dot {
     position:absolute;
-    width:20px; height:20px;
-    background:transparent;
-    border-radius:50%;
+    width:24px; height:24px; /* fixed hover hitbox */
     transform:translate(-50%,-50%);
     pointer-events:auto;
   }
-  .dot::before{
+  .dot::before {
     content:"";
     display:block;
     width:10px; height:10px;
     background:var(--danger);
     border:1px solid rgba(255,255,255,0.7);
     border-radius:50%;
-    margin:auto;
     position:absolute;
     top:50%; left:50%;
-    transform:translate(-50%,-50%);
+    transform:translate(-50%,-50%) scale(var(--dot-scale,1));
   }
-  .dot:hover::after{
+  .dot:hover::after {
     content:attr(data-info);
     position:absolute;
     top:-36px;
@@ -150,9 +147,11 @@
 
   function applyTransform(){
     stage.style.transform = `translate(${tx}px, ${ty}px) scale(${scale})`;
-    const inv = 1/(scale*1.5);
+    let inv = 1/(scale*1.5);
+    if(inv > 1) inv = 1;     
+    if(inv < 0.3) inv = 0.3;
     markers.querySelectorAll('.dot').forEach(el=>{
-      el.style.transform = `translate(-50%,-50%) scale(${inv})`;
+      el.style.setProperty('--dot-scale', inv);
     });
   }
 
@@ -160,7 +159,7 @@
     if(!imgW || !imgH) return;
     const vw = viewport.clientWidth, vh = viewport.clientHeight;
     const s = Math.min(vw/imgW, vh/imgH);
-    scale = s; // no clamping to MIN_SCALE
+    scale = s;
     tx = (vw - imgW*scale)/2;
     ty = (vh - imgH*scale)/2;
     applyTransform();
