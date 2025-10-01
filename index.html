@@ -20,34 +20,26 @@
   .stage{position:absolute;left:0;top:0;transform-origin:0 0}
   .stage img{display:block}
   .markers{position:absolute;left:0;top:0}
-  .dot {
+  .dot{
     position:absolute;
-    width:24px; height:24px; /* fixed hover hitbox */
-    transform:translate(-50%,-50%);
-    pointer-events:auto;
-  }
-  .dot::before {
-    content:"";
-    display:block;
     width:10px; height:10px;
     background:var(--danger);
     border:1px solid rgba(255,255,255,0.7);
     border-radius:50%;
-    position:absolute;
-    top:50%; left:50%;
-    transform:translate(-50%,-50%) scale(var(--dot-scale,1));
+    transform:translate(-50%,-50%);
+    pointer-events:auto;
   }
-  .dot:hover::after {
+  .dot:hover::after{
     content:attr(data-info);
     position:absolute;
-    top:-36px;
+    top:-28px;
     left:50%;
     transform:translateX(-50%);
     background:rgba(0,0,0,0.85);
     color:#fff;
-    padding:6px 10px;
+    padding:4px 8px;
     border-radius:6px;
-    font-size:1rem;
+    font-size:0.9rem;
     white-space:nowrap;
     pointer-events:none;
     z-index:1000;
@@ -77,6 +69,13 @@
 (() => {
   const WORLD = 12800;
 
+  // >>> Offset corrections (in game units). Adjust as needed.
+  // Based on your observation: shown x ~+98.9 too far right; shown z ~-19.7 too low
+  // So we shift left by 98.9 and up by 19.7.
+  const OFFSET_X = -98.9;
+  const OFFSET_Z = +19.7;
+  // <<<
+
   const fileInput = document.getElementById('fileInput');
   const tsSelect = document.getElementById('timestampSelect');
   const viewport = document.getElementById('viewport');
@@ -90,7 +89,7 @@
   let imgW = 0, imgH = 0;
 
   let scale = 1, tx = 0, ty = 0;
-  const MIN_SCALE = 0.001, MAX_SCALE = 200;
+  const MIN_SCALE = 0.2, MAX_SCALE = 200;
 
   const lineRe =
   /^(?<time>\d{2}:\d{2}:\d{2})\s*\|\s*Player\s+"(?<name>.+?)"\s*\(id=(?<id>\d+)\s+pos=<\s*(?<x>[-+\d.]+)\s*,\s*(?<z>[-+\d.]+)\s*,\s*(?<y>[-+\d.]+)\s*>\)\s*$/i;
@@ -124,8 +123,12 @@
   }
 
   function worldToImagePx(p){
-    const xpx = (p.x / WORLD) * imgW;
-    const ypx = imgH - (p.z / WORLD) * imgH;
+    // Apply offsets in world units BEFORE mapping to pixels
+    const adjX = p.x + OFFSET_X;
+    const adjZ = p.z + OFFSET_Z;
+
+    const xpx = (adjX / WORLD) * imgW;
+    const ypx = imgH - (adjZ / WORLD) * imgH;
     return { xpx, ypx };
   }
 
@@ -147,19 +150,13 @@
 
   function applyTransform(){
     stage.style.transform = `translate(${tx}px, ${ty}px) scale(${scale})`;
-    let inv = 1/(scale*1.5);
-    if(inv > 1) inv = 1;     
-    if(inv < 0.3) inv = 0.3;
-    markers.querySelectorAll('.dot').forEach(el=>{
-      el.style.setProperty('--dot-scale', inv);
-    });
   }
 
   function fitToViewport(){
     if(!imgW || !imgH) return;
     const vw = viewport.clientWidth, vh = viewport.clientHeight;
     const s = Math.min(vw/imgW, vh/imgH);
-    scale = s;
+    scale = Math.max(MIN_SCALE, Math.min(MAX_SCALE, s));
     tx = (vw - imgW*scale)/2;
     ty = (vh - imgH*scale)/2;
     applyTransform();
