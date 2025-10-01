@@ -19,21 +19,7 @@
   #stage{position:absolute;top:0;left:0;transform-origin:0 0}
   #mapImg{display:block;max-width:none;user-select:none;pointer-events:none}
   #markers{position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none}
-  .dot{
-    position:absolute;
-    width:20px; height:20px; /* hover area */
-    transform:translate(-50%,-50%);
-    pointer-events:auto;
-  }
-  .dot::before{
-    content:'';
-    position:absolute;
-    top:50%; left:50%;
-    width:10px; height:10px;
-    border-radius:50%;
-    background:red;
-    transform:translate(-50%,-50%);
-  }
+  .dot{position:absolute;width:10px;height:10px;border-radius:50%;background:red;transform:translate(-50%,-50%);pointer-events:auto}
   .dot:hover::after{
     content:attr(data-name);
     position:absolute;
@@ -43,7 +29,7 @@
     padding:6px 8px;
     border-radius:6px;
     white-space:nowrap;
-    font-size:1rem;
+    font-size:1rem; /* bigger tooltip */
     z-index:100;
     pointer-events:none;
   }
@@ -105,7 +91,7 @@
     if(!imgW||!imgH) return;
     const vw=viewport.clientWidth, vh=viewport.clientHeight;
     const s=Math.min(vw/imgW, vh/imgH);
-    scale=s; // no clamp here so it really fits
+    scale=s;
     tx=(vw-imgW*scale)/2;
     ty=(vh-imgH*scale)/2;
     applyTransform();
@@ -115,8 +101,8 @@
     stage.style.transform=`translate(${tx}px,${ty}px) scale(${scale})`;
     markers.querySelectorAll('.dot').forEach(el=>{
       let inv=1/scale;
-      if(inv>1) inv=1;
-      if(inv<0.3) inv=0.3;
+      if(inv>1) inv=1;     // don’t grow when zoomed out
+      if(inv<0.3) inv=0.3; // don’t vanish completely
       el.style.transform=`translate(-50%,-50%) scale(${inv})`;
     });
   }
@@ -169,7 +155,7 @@
       const time=m[1];
       const name=m[2];
       const x=parseFloat(m[3]);
-      const z=parseFloat(m[4]);
+      const z=parseFloat(m[4]); // ADM is X,Z,Y -> use Z as Y axis
       const y=parseFloat(m[5]);
       if(!entriesByTime[time]) entriesByTime[time]=[];
       entriesByTime[time].push({name,x,z,y});
@@ -197,7 +183,7 @@
     players.forEach(p=>{
       const dot=document.createElement('div');
       dot.className='dot';
-      const px=p.x/12800*imgW;
+      const px=p.x/imgW*imgW;
       const py=(12800-p.z)/12800*imgH;
       dot.style.left=px+'px';
       dot.style.top=py+'px';
