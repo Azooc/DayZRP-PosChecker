@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>ADM Map Viewer (Zoom + Pan)</title>
+<title>ADM Map Viewer</title>
 <style>
   :root{--bg:#0f1720;--panel:#0b1220;--muted:#9aa4b2;--accent:#7dd3fc;--danger:#ff4d4d}
   html,body{height:100%;margin:0;font-family:Inter,ui-sans-serif,system-ui,Segoe UI,Roboto,"Helvetica Neue",Arial}
@@ -16,18 +16,12 @@
   .btn{background:transparent;border:1px solid rgba(255,255,255,0.06);padding:8px 12px;border-radius:8px;cursor:pointer;color:inherit}
   select{padding:6px;border-radius:6px;background:var(--panel);color:inherit;border:1px solid rgba(255,255,255,0.08)}
   .panel{background:var(--panel);padding:12px;border-radius:10px;border:1px solid rgba(255,255,255,0.03)}
-  /* Map viewport */
   .viewport{position:relative;height:75vh;min-height:420px;border-radius:12px;border:1px solid rgba(255,255,255,0.06);overflow:hidden;background:#000;user-select:none;touch-action:none}
-  /* Stage holds the image and markers and is transformed (pan/zoom) */
   .stage{position:absolute;left:0;top:0;transform-origin:0 0}
   .stage img{display:block}
-  /* Marker layer sits on top with the same pixel size as the image */
   .markers{position:absolute;left:0;top:0}
   .dot{position:absolute;width:10px;height:10px;background:var(--danger);border:1px solid rgba(255,255,255,0.7);border-radius:50%;transform:translate(-50%,-50%);pointer-events:auto}
   .dot:hover::after{content:attr(data-info);position:absolute;top:-28px;left:50%;transform:translateX(-50%);background:rgba(0,0,0,0.85);color:#fff;padding:4px 8px;border-radius:6px;font-size:0.75rem;white-space:nowrap;pointer-events:none}
-  /* Small HUD buttons */
-  .hud{position:absolute;right:10px;top:10px;display:flex;gap:6px;z-index:5}
-  .hud .btn{padding:6px 8px;border-radius:8px}
 </style>
 </head>
 <body>
@@ -38,17 +32,10 @@
         <label class="btn">📁 Upload ADM<input type="file" id="fileInput" accept=".txt,.log,.adm"/></label>
         <select id="timestampSelect"></select>
         <button class="btn" id="fitBtn" title="Fit to screen">Fit</button>
-        <button class="btn" id="resetBtn" title="Reset pan/zoom">Reset</button>
       </div>
     </header>
 
     <div class="viewport panel" id="viewport">
-      <div class="hud">
-        <button class="btn" id="zoomInBtn" title="Zoom In">＋</button>
-        <button class="btn" id="zoomOutBtn" title="Zoom Out">－</button>
-      </div>
-
-      <!-- Stage (pans/zooms via CSS transform) -->
       <div class="stage" id="stage">
         <img id="map" src="map.jpg" alt="Map"/>
         <div class="markers" id="markers"></div>
@@ -58,10 +45,8 @@
 
 <script>
 (() => {
-  // --- Hard-coded world & coord order (X, Z, Y) ---
   const WORLD = 12800;
 
-  // Elements
   const fileInput = document.getElementById('fileInput');
   const tsSelect = document.getElementById('timestampSelect');
   const viewport = document.getElementById('viewport');
@@ -69,26 +54,17 @@
   const mapImg = document.getElementById('map');
   const markers = document.getElementById('markers');
   const fitBtn = document.getElementById('fitBtn');
-  const resetBtn = document.getElementById('resetBtn');
-  const zoomInBtn = document.getElementById('zoomInBtn');
-  const zoomOutBtn = document.getElementById('zoomOutBtn');
 
-  // Data
-  let snapshots = new Map();      // time -> [{name,id,x,z,y}]
+  let snapshots = new Map();
   let orderedTimestamps = [];
-  let imgW = 0, imgH = 0;         // natural image pixels
+  let imgW = 0, imgH = 0;
 
-  // View transform
-  let scale = 1;
-  let tx = 0, ty = 0;             // translation in pixels (stage transform)
-  const MIN_SCALE = 0.2;
-  const MAX_SCALE = 8;
+  let scale = 1, tx = 0, ty = 0;
+  const MIN_SCALE = 0.2, MAX_SCALE = 50;
 
-  // Regex for ADM line with X, Z, Y order
   const lineRe =
   /^(?<time>\d{2}:\d{2}:\d{2})\s*\|\s*Player\s+"(?<name>.+?)"\s*\(id=(?<id>\d+)\s+pos=<\s*(?<x>[-+\d.]+)\s*,\s*(?<z>[-+\d.]+)\s*,\s*(?<y>[-+\d.]+)\s*>\)\s*$/i;
 
-  // ---------- Parsing ----------
   function parseADM(text){
     snapshots.clear(); orderedTimestamps=[];
     const lines = text.split(/\r?\n/);
@@ -117,10 +93,7 @@
     }
   }
 
-  // ---------- Mapping world → image pixels ----------
   function worldToImagePx(p){
-    // x: 0..WORLD → 0..imgW
-    // z: 0..WORLD (bottom→top) → y pixels from top = imgH - (z/WORLD)*imgH
     const xpx = (p.x / WORLD) * imgW;
     const ypx = imgH - (p.z / WORLD) * imgH;
     return { xpx, ypx };
@@ -139,16 +112,11 @@
       d.setAttribute('data-info', `${p.name} (${p.x.toFixed(1)}, ${p.z.toFixed(1)})`);
       markers.appendChild(d);
     }
-    applyTransform(); // keep current pan/zoom
+    applyTransform();
   }
 
-  // ---------- Pan & Zoom ----------
   function applyTransform(){
     stage.style.transform = `translate(${tx}px, ${ty}px) scale(${scale})`;
-    // Keep dot size constant in screen space: counter-scale marker dots
-    // (Markers are inside the same scaled stage. To keep constant size,
-    //  set their scale inverse using CSS variable or transform.)
-    // Simpler approach: scale the dot via CSS 'transform: translate(-50%,-50%) scale(1/scale)'
     const inv = 1/scale;
     markers.querySelectorAll('.dot').forEach(el=>{
       el.style.transform = `translate(-50%,-50%) scale(${inv})`;
@@ -160,14 +128,8 @@
     const vw = viewport.clientWidth, vh = viewport.clientHeight;
     const s = Math.min(vw/imgW, vh/imgH);
     scale = Math.max(MIN_SCALE, Math.min(MAX_SCALE, s));
-    // center
     tx = (vw - imgW*scale)/2;
     ty = (vh - imgH*scale)/2;
-    applyTransform();
-  }
-
-  function resetView(){
-    scale = 1; tx = 0; ty = 0;
     applyTransform();
   }
 
@@ -176,19 +138,14 @@
     let newScale = scale * factor;
     newScale = Math.max(MIN_SCALE, Math.min(MAX_SCALE, newScale));
     const k = newScale/oldScale;
-
-    // Convert screen point to stage-local before zoom
     const sx = (cx - tx);
     const sy = (cy - ty);
-
-    // Adjust translate to keep the point under cursor stable
     tx = cx - sx * k;
     ty = cy - sy * k;
     scale = newScale;
     applyTransform();
   }
 
-  // Mouse wheel zoom
   viewport.addEventListener('wheel', (e)=>{
     e.preventDefault();
     const factor = (e.deltaY < 0) ? 1.15 : 1/1.15;
@@ -198,7 +155,6 @@
     zoomAt(cx, cy, factor);
   }, { passive:false });
 
-  // Drag panning
   let dragging = false, lx=0, ly=0;
   viewport.addEventListener('mousedown', (e)=>{
     dragging = true; lx = e.clientX; ly = e.clientY;
@@ -212,36 +168,9 @@
     applyTransform();
   });
 
-  // Touch support (simple)
-  let touchId = null;
-  viewport.addEventListener('touchstart', (e)=>{
-    if(e.touches.length===1){ touchId = e.touches[0].identifier; lx=e.touches[0].clientX; ly=e.touches[0].clientY; }
-  }, {passive:false});
-  viewport.addEventListener('touchmove', (e)=>{
-    if(e.touches.length!==1 || touchId===null) return;
-    const t = [...e.touches].find(t=>t.identifier===touchId); if(!t) return;
-    const dx = t.clientX - lx, dy = t.clientY - ly;
-    lx = t.clientX; ly = t.clientY;
-    tx += dx; ty += dy; applyTransform();
-  }, {passive:false});
-  viewport.addEventListener('touchend', ()=>{ touchId=null; }, {passive:false});
-
-  // Double click = reset
   viewport.addEventListener('dblclick', ()=> fitToViewport());
-
-  // HUD buttons
   fitBtn.addEventListener('click', fitToViewport);
-  resetBtn.addEventListener('click', resetView);
-  zoomInBtn.addEventListener('click', ()=>{
-    const rect = viewport.getBoundingClientRect();
-    zoomAt(rect.width/2, rect.height/2, 1.2);
-  });
-  zoomOutBtn.addEventListener('click', ()=>{
-    const rect = viewport.getBoundingClientRect();
-    zoomAt(rect.width/2, rect.height/2, 1/1.2);
-  });
 
-  // ---------- Wiring ----------
   tsSelect.addEventListener('change', ()=>{
     const t = tsSelect.value;
     renderDots(snapshots.get(t)||[]);
@@ -262,12 +191,9 @@
     reader.readAsText(e.target.files[0]);
   });
 
-  // Once the image is loaded, capture its natural size for precise mapping
   mapImg.addEventListener('load', ()=>{
-    // Use naturalWidth/Height for accurate pixel mapping
     imgW = mapImg.naturalWidth || mapImg.width;
     imgH = mapImg.naturalHeight || mapImg.height;
-    // Size stage to the image's intrinsic pixels so markers align perfectly
     stage.style.width = imgW + 'px';
     stage.style.height = imgH + 'px';
     markers.style.width = imgW + 'px';
