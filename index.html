@@ -78,7 +78,8 @@
 
 <script>
 (() => {
-  const WORLD = 12800;
+  const WORLD_X = 12800;
+  const WORLD_Z = 12800;
 
   const fileInput = document.getElementById('fileInput');
   const tsSelect = document.getElementById('timestampSelect');
@@ -127,10 +128,8 @@
   }
 
   function worldToImagePx(p){
-    const SCALE_X = imgW / WORLD;
-    const SCALE_Z = imgH / WORLD;
-    const xpx = p.x * SCALE_X;
-    const ypx = imgH - (p.z * SCALE_Z);
+    const xpx = (p.x / WORLD_X) * imgW;
+    const ypx = imgH - (p.z / WORLD_Z) * imgH;
     return { xpx, ypx };
   }
 
