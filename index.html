@@ -127,8 +127,10 @@
   }
 
   function worldToImagePx(p){
-    const xpx = (p.x / WORLD) * imgW;
-    const ypx = imgH - (p.z / WORLD) * imgH;
+    const SCALE_X = imgW / WORLD;
+    const SCALE_Z = imgH / WORLD;
+    const xpx = p.x * SCALE_X;
+    const ypx = imgH - (p.z * SCALE_Z);
     return { xpx, ypx };
   }
 
@@ -160,7 +162,7 @@
     if(!imgW || !imgH) return;
     const vw = viewport.clientWidth, vh = viewport.clientHeight;
     const s = Math.min(vw/imgW, vh/imgH);
-    scale = s; // no clamping to MIN_SCALE
+    scale = s;
     tx = (vw - imgW*scale)/2;
     ty = (vh - imgH*scale)/2;
     applyTransform();
