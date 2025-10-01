@@ -22,7 +22,7 @@
   .markers{position:absolute;left:0;top:0}
   .dot{
     position:absolute;
-    width:20px; height:20px; /* larger hitbox */
+    width:20px; height:20px;
     background:transparent;
     border-radius:50%;
     transform:translate(-50%,-50%);
@@ -93,7 +93,7 @@
   let imgW = 0, imgH = 0;
 
   let scale = 1, tx = 0, ty = 0;
-  const MIN_SCALE = 0.2, MAX_SCALE = 200;
+  const MIN_SCALE = 0.001, MAX_SCALE = 200;
 
   const lineRe =
   /^(?<time>\d{2}:\d{2}:\d{2})\s*\|\s*Player\s+"(?<name>.+?)"\s*\(id=(?<id>\d+)\s+pos=<\s*(?<x>[-+\d.]+)\s*,\s*(?<z>[-+\d.]+)\s*,\s*(?<y>[-+\d.]+)\s*>\)\s*$/i;
@@ -150,11 +150,8 @@
 
   function applyTransform(){
     stage.style.transform = `translate(${tx}px, ${ty}px) scale(${scale})`;
-    const inv = 1/(scale*1.5); // shrink more when zoomed in
-    markers.querySelectorAll('.dot::before'); // fix scaling below
+    const inv = 1/(scale*1.5);
     markers.querySelectorAll('.dot').forEach(el=>{
-      el.firstChild;
-      el.style.setProperty('--dot-scale', inv);
       el.style.transform = `translate(-50%,-50%) scale(${inv})`;
     });
   }
@@ -163,7 +160,7 @@
     if(!imgW || !imgH) return;
     const vw = viewport.clientWidth, vh = viewport.clientHeight;
     const s = Math.min(vw/imgW, vh/imgH);
-    scale = Math.max(MIN_SCALE, Math.min(MAX_SCALE, s));
+    scale = s; // no clamping to MIN_SCALE
     tx = (vw - imgW*scale)/2;
     ty = (vh - imgH*scale)/2;
     applyTransform();
