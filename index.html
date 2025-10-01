@@ -20,8 +20,41 @@
   .stage{position:absolute;left:0;top:0;transform-origin:0 0}
   .stage img{display:block}
   .markers{position:absolute;left:0;top:0}
-  .dot{position:absolute;width:10px;height:10px;background:var(--danger);border:1px solid rgba(255,255,255,0.7);border-radius:50%;transform:translate(-50%,-50%);pointer-events:auto}
-  .dot:hover::after{content:attr(data-info);position:absolute;top:-28px;left:50%;transform:translateX(-50%);background:rgba(0,0,0,0.85);color:#fff;padding:4px 8px;border-radius:6px;font-size:0.75rem;white-space:nowrap;pointer-events:none}
+  .dot{
+    position:absolute;
+    width:20px; height:20px; /* larger hitbox */
+    background:transparent;
+    border-radius:50%;
+    transform:translate(-50%,-50%);
+    pointer-events:auto;
+  }
+  .dot::before{
+    content:"";
+    display:block;
+    width:10px; height:10px;
+    background:var(--danger);
+    border:1px solid rgba(255,255,255,0.7);
+    border-radius:50%;
+    margin:auto;
+    position:absolute;
+    top:50%; left:50%;
+    transform:translate(-50%,-50%);
+  }
+  .dot:hover::after{
+    content:attr(data-info);
+    position:absolute;
+    top:-36px;
+    left:50%;
+    transform:translateX(-50%);
+    background:rgba(0,0,0,0.85);
+    color:#fff;
+    padding:6px 10px;
+    border-radius:6px;
+    font-size:1rem;
+    white-space:nowrap;
+    pointer-events:none;
+    z-index:1000;
+  }
 </style>
 </head>
 <body>
@@ -60,7 +93,7 @@
   let imgW = 0, imgH = 0;
 
   let scale = 1, tx = 0, ty = 0;
-  const MIN_SCALE = 0.2, MAX_SCALE = 50;
+  const MIN_SCALE = 0.2, MAX_SCALE = 200;
 
   const lineRe =
   /^(?<time>\d{2}:\d{2}:\d{2})\s*\|\s*Player\s+"(?<name>.+?)"\s*\(id=(?<id>\d+)\s+pos=<\s*(?<x>[-+\d.]+)\s*,\s*(?<z>[-+\d.]+)\s*,\s*(?<y>[-+\d.]+)\s*>\)\s*$/i;
@@ -117,8 +150,11 @@
 
   function applyTransform(){
     stage.style.transform = `translate(${tx}px, ${ty}px) scale(${scale})`;
-    const inv = 1/scale;
+    const inv = 1/(scale*1.5); // shrink more when zoomed in
+    markers.querySelectorAll('.dot::before'); // fix scaling below
     markers.querySelectorAll('.dot').forEach(el=>{
+      el.firstChild;
+      el.style.setProperty('--dot-scale', inv);
       el.style.transform = `translate(-50%,-50%) scale(${inv})`;
     });
   }
@@ -143,7 +179,7 @@
     tx = cx - sx * k;
     ty = cy - sy * k;
     scale = newScale;
-    applyTransform(); //fix?
+    applyTransform();
   }
 
   viewport.addEventListener('wheel', (e)=>{
@@ -192,8 +228,8 @@
   });
 
   mapImg.addEventListener('load', ()=>{
-    imgW = mapImg.naturalWidth || mapImg.width;
-    imgH = mapImg.naturalHeight || mapImg.height;
+    imgW = mapImg.naturalWidth;
+    imgH = mapImg.naturalHeight;
     stage.style.width = imgW + 'px';
     stage.style.height = imgH + 'px';
     markers.style.width = imgW + 'px';
