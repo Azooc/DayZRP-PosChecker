@@ -30,7 +30,22 @@
 
   /* SVG appearance */
   .track{stroke-width:2.5;opacity:0.9;stroke-linecap:round}
-  .poi{stroke:#fff;stroke-width:1.5}
+  .poi{stroke:#fff;stroke-width:1.5;transition:all 0.15s ease;}
+  .poi.hovered{stroke:#fff;stroke-width:2.5;filter:brightness(1.4);r:14;}
+
+  /* Custom tooltip */
+  #tooltip {
+    position:absolute;
+    background:#222;
+    color:#fff;
+    font-size:12px;
+    padding:4px 8px;
+    border-radius:4px;
+    pointer-events:none;
+    white-space:pre;
+    z-index:3000;
+    display:none;
+  }
 </style>
 </head>
 <body>
@@ -72,28 +87,32 @@
     </div>
   </div>
 
+  <!-- Tooltip -->
+  <div id="tooltip"></div>
+
 <script>
 (() => {
   const WORLD = 12800;
 
-  const fileInput = document.getElementById('fileInput');
-  const viewport = document.getElementById('viewport');
-  const stage = document.getElementById('stage');
-  const mapImg = document.getElementById('map');
-  const overlay = document.getElementById('overlay');
-  const gTracks = document.getElementById('tracks');
-  const gDots = document.getElementById('dots');
-  const fitBtn = document.getElementById('fitBtn');
-  const startTimeSel = document.getElementById('startTime');
-  const endTimeSel   = document.getElementById('endTime');
-  const playerListDiv = document.getElementById('playerList');
-  const selectAllBtn  = document.getElementById('selectAllBtn');
-  const clearAllBtn   = document.getElementById('clearAllBtn');
+  const fileInput=document.getElementById('fileInput');
+  const viewport=document.getElementById('viewport');
+  const stage=document.getElementById('stage');
+  const mapImg=document.getElementById('map');
+  const overlay=document.getElementById('overlay');
+  const gTracks=document.getElementById('tracks');
+  const gDots=document.getElementById('dots');
+  const fitBtn=document.getElementById('fitBtn');
+  const startTimeSel=document.getElementById('startTime');
+  const endTimeSel=document.getElementById('endTime');
+  const playerListDiv=document.getElementById('playerList');
+  const selectAllBtn=document.getElementById('selectAllBtn');
+  const clearAllBtn=document.getElementById('clearAllBtn');
+  const tooltip=document.getElementById('tooltip');
 
-  let snapshots=new Map(), orderedTimestamps=[];
+  let snapshots=new Map(),orderedTimestamps=[];
   let imgW=0,imgH=0;
-  let scale=1,tx=0,ty=0;
-  const MIN_SCALE=0.001, MAX_SCALE=200;
+  let scale=1,tx=0,ty=0,fitScale=1;
+  let MIN_SCALE=0.001,MAX_SCALE=200;
   let selectedPlayers=new Set();
   let playerColors=new Map();
 
@@ -193,6 +212,11 @@
   function renderRange(){
     gTracks.innerHTML='';gDots.innerHTML='';
     const paths=gatherPlayersInRange();
+    const baseDotSize=10; // size at fit scale
+    const baseLine=2.5;   // line thickness at fit scale
+    const dotSize=baseDotSize*(fitScale/scale);
+    const lineW=baseLine*(fitScale/scale);
+
     paths.forEach((positions,name)=>{
       if(!selectedPlayers.has(name))return;
       const color=playerColors.get(name)||'#ff0000';
@@ -204,10 +228,11 @@
           const p0=worldToImagePx(positions[i-1]);
           const p1=worldToImagePx(positions[i]);
           const dx=p1.xpx-p0.xpx,dy=p1.ypx-p0.ypx,len=Math.hypot(dx,dy)||1;
-          const offset=8;const ox=(dx/len)*offset,oy=(dy/len)*offset;
+          const offset=dotSize+2;const ox=(dx/len)*offset,oy=(dy/len)*offset;
           const line=document.createElementNS('http://www.w3.org/2000/svg','line');
           line.setAttribute('x1',p0.xpx+ox);line.setAttribute('y1',p0.ypx+oy);
           line.setAttribute('x2',p1.xpx-ox);line.setAttribute('y2',p1.ypx-oy);
+          line.setAttribute('stroke-width',lineW);
           line.setAttribute('class','track');line.setAttribute('stroke',lineColor);
           line.setAttribute('marker-end','url(#arrowhead)');
           gTracks.appendChild(line);
@@ -217,13 +242,23 @@
       for(const pos of positions){
         const {xpx,ypx}=worldToImagePx(pos);
         const c=document.createElementNS('http://www.w3.org/2000/svg','circle');
-        c.setAttribute('cx',xpx);c.setAttribute('cy',ypx);c.setAttribute('r',8);
+        c.setAttribute('cx',xpx);c.setAttribute('cy',ypx);c.setAttribute('r',dotSize);
         c.setAttribute('class','poi');c.setAttribute('fill',color);
 
-        // Tooltip info on hover
-        const title=document.createElementNS('http://www.w3.org/2000/svg','title');
-        title.textContent=`${name}\n${pos.time}\nX:${pos.x.toFixed(1)} Z:${pos.z.toFixed(1)} Y:${pos.y.toFixed(1)}`;
-        c.appendChild(title);
+        // Hover highlight + tooltip
+        c.addEventListener('mouseenter',(e)=>{
+          c.classList.add('hovered');
+          tooltip.style.display='block';
+          tooltip.textContent=`${name}\n${pos.time}\nX:${pos.x.toFixed(1)} Z:${pos.z.toFixed(1)} Y:${pos.y.toFixed(1)}`;
+        });
+        c.addEventListener('mousemove',(e)=>{
+          tooltip.style.left=(e.pageX+12)+'px';
+          tooltip.style.top=(e.pageY+12)+'px';
+        });
+        c.addEventListener('mouseleave',()=>{
+          c.classList.remove('hovered');
+          tooltip.style.display='none';
+        });
 
         gDots.appendChild(c);
       }
@@ -241,12 +276,17 @@
   function fitToViewport(){
     if(!imgW||!imgH)return;
     const vw=viewport.clientWidth,vh=viewport.clientHeight;
-    scale=Math.min(vw/imgW,vh/imgH);tx=(vw-imgW*scale)/2;ty=(vh-imgH*scale)/2;applyTransform();
+    scale=Math.min(vw/imgW,vh/imgH);
+    fitScale=scale;
+    MIN_SCALE=fitScale; // prevent zooming out beyond fit
+    tx=(vw-imgW*scale)/2;ty=(vh-imgH*scale)/2;
+    applyTransform();
   }
   function zoomAt(cx,cy,f){
     const old=scale;let next=Math.max(MIN_SCALE,Math.min(MAX_SCALE,scale*f));
-    const k=next/old;const sx=(cx-tx),sy=(cy-ty);tx=cx-sx*k;ty=cy-sy*k;scale=next;applyTransform();
+    const k=next/old;const sx=(cx-tx),sy=(cy-ty);tx=cx-sx*k;ty=cy-sy*k;scale=next;renderRange();applyTransform();
   }
+
   viewport.addEventListener('wheel',e=>{
     e.preventDefault();const rect=viewport.getBoundingClientRect();
     zoomAt(e.clientX-rect.left,e.clientY-rect.top,(e.deltaY<0)?1.15:1/1.15);
@@ -275,14 +315,14 @@
   fileInput.addEventListener('change',e=>{
     const f=e.target.files?.[0];if(!f)return;
     const reader=new FileReader();
-    reader.onload=()=>{parseADM(String(reader.result||''));populateTimestamps();populatePlayerListForRange();renderRange();fitToViewport();};
+    reader.onload=()=>{parseADM(String(reader.result||''));populateTimestamps();populatePlayerListForRange();fitToViewport();renderRange();};
     reader.readAsText(f);
   });
   mapImg.addEventListener('load',()=>{
     imgW=mapImg.naturalWidth;imgH=mapImg.naturalHeight;
     overlay.setAttribute('viewBox',`0 0 ${imgW} ${imgH}`);
     overlay.setAttribute('width',imgW);overlay.setAttribute('height',imgH);
-    stage.style.width=imgW+'px';stage.style.height=imgH+'px';fitToViewport();
+    stage.style.width=imgW+'px';stage.style.height=imgH+'px';fitToViewport();renderRange();
   });
 })();
 </script>
