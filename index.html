@@ -14,7 +14,7 @@
   .controls{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
   input[type=file]{display:none}
   .btn{background:transparent;border:1px solid rgba(255,255,255,0.06);padding:8px 12px;border-radius:8px;cursor:pointer;color:inherit}
-  select, input[type=number]{padding:6px;border-radius:6px;background:var(--panel);color:inherit;border:1px solid rgba(255,255,255,0.08)}
+  select{padding:6px;border-radius:6px;background:var(--panel);color:inherit;border:1px solid rgba(255,255,255,0.08)}
   .panel{background:var(--panel);padding:12px;border-radius:10px;border:1px solid rgba(255,255,255,0.03);margin-bottom:10px}
   .viewport{position:relative;height:75vh;min-height:420px;border-radius:12px;border:1px solid rgba(255,255,255,0.06);overflow:hidden;background:#000;user-select:none;touch-action:none}
   .stage{position:absolute;left:0;top:0;transform-origin:0 0}
@@ -22,56 +22,42 @@
   .markers{position:absolute;left:0;top:0}
   .dot{
     position:absolute;
-    width:20px; height:20px;
-    background:transparent;
+    width:16px; height:16px;
+    background:var(--danger);
+    border:1px solid rgba(255,255,255,0.7);
     border-radius:50%;
     transform:translate(-50%,-50%);
     pointer-events:auto;
   }
-  .dot::before{
-    content:"";
-    display:block;
-    width:10px; height:10px;
-    background:var(--danger);
-    border:1px solid rgba(255,255,255,0.7);
-    border-radius:50%;
-    margin:auto;
-    position:absolute;
-    top:50%; left:50%;
-    transform:translate(-50%,-50%);
-  }
   .dot:hover::after{
     content:attr(data-info);
     position:absolute;
-    top:-36px;
+    top:-26px;
     left:50%;
     transform:translateX(-50%);
     background:rgba(0,0,0,0.85);
     color:#fff;
-    padding:6px 10px;
+    padding:4px 8px;
     border-radius:6px;
-    font-size:1rem;
+    font-size:0.9rem;
     white-space:nowrap;
     pointer-events:none;
     z-index:1000;
   }
-  .radiusCircle {
+  .arrow {
     position:absolute;
-    border-radius:50%;
-    background:rgba(125,211,252,0.15);
-    border:1px dashed var(--accent);
-    transform:translate(-50%,-50%);
-    pointer-events:none;
+    height:2px;
+    background:var(--accent);
+    transform-origin:0 50%;
+    opacity:0.6;
   }
-  #radiusPanel {
-    display:none;
-    margin-bottom:12px;
-  }
-  #radiusResults {
+  #playerList {
+    max-height:150px;
+    overflow-y:auto;
     font-size:0.9rem;
-    margin-top:6px;
-    max-height:120px;
-    overflow:auto;
+  }
+  #playerList label {
+    display:block;
   }
 </style>
 </head>
@@ -81,35 +67,23 @@
       <h1>ADM Map Viewer</h1>
       <div class="controls">
         <label class="btn">📁 Upload ADM<input type="file" id="fileInput" accept=".txt,.log,.adm"/></label>
-        <select id="timestampSelect"></select>
         <button class="btn" id="fitBtn" title="Fit to screen">Fit</button>
       </div>
     </header>
 
-    <div id="radiusPanel" class="panel">
-      <label>Radius:
-        <select id="radiusSelect">
-          <option value="50">50</option>
-          <option value="100">100</option>
-          <option value="200">200</option>
-          <option value="300">300</option>
-          <option value="400">400</option>
-          <option value="500">500</option>
-          <option value="600">600</option>
-          <option value="700">700</option>
-          <option value="800">800</option>
-          <option value="900">900</option>
-          <option value="1000">1000</option>
-        </select>
-      </label>
-      <div id="radiusResults"></div>
+    <!-- Log pulling panel -->
+    <div class="panel">
+      <div>
+        Start: <select id="startTime"></select>
+        End: <select id="endTime"></select>
+      </div>
+      <div id="playerList"></div>
     </div>
 
     <div class="viewport panel" id="viewport">
       <div class="stage" id="stage">
         <img id="map" src="map.jpg" alt="Map"/>
         <div class="markers" id="markers"></div>
-        <div id="radiusCircle" class="radiusCircle"></div>
       </div>
     </div>
   </div>
@@ -119,17 +93,15 @@
   const WORLD = 12800;
 
   const fileInput = document.getElementById('fileInput');
-  const tsSelect = document.getElementById('timestampSelect');
   const viewport = document.getElementById('viewport');
   const stage = document.getElementById('stage');
   const mapImg = document.getElementById('map');
   const markers = document.getElementById('markers');
   const fitBtn = document.getElementById('fitBtn');
 
-  const radiusPanel = document.getElementById('radiusPanel');
-  const radiusSelect = document.getElementById('radiusSelect');
-  const radiusResults = document.getElementById('radiusResults');
-  const radiusCircle = document.getElementById('radiusCircle');
+  const startTimeSel = document.getElementById('startTime');
+  const endTimeSel = document.getElementById('endTime');
+  const playerListDiv = document.getElementById('playerList');
 
   let snapshots = new Map();
   let orderedTimestamps = [];
@@ -138,8 +110,7 @@
   let scale = 1, tx = 0, ty = 0;
   const MIN_SCALE = 0.001, MAX_SCALE = 200;
 
-  let currentPlayers = [];
-  let selectedPlayer = null;
+  let selectedPlayers = new Set();
 
   const lineRe =
   /^(?<time>\d{2}:\d{2}:\d{2})\s*\|\s*Player\s+"(?<name>.+?)"\s*\(id=(?<id>\d+)\s+pos=<\s*(?<x>[-+\d.]+)\s*,\s*(?<z>[-+\d.]+)\s*,\s*(?<y>[-+\d.]+)\s*>\)\s*$/i;
@@ -157,18 +128,39 @@
   }
 
   function populateTimestamps(){
-    tsSelect.innerHTML = '';
-    if(!orderedTimestamps.length){
-      const o = document.createElement('option');
-      o.value=''; o.textContent='No timestamps found';
-      tsSelect.appendChild(o);
-      return;
-    }
+    startTimeSel.innerHTML = '';
+    endTimeSel.innerHTML = '';
     for(const t of orderedTimestamps){
-      const o = document.createElement('option');
-      const count = snapshots.get(t).length;
-      o.value = t; o.textContent = `${t} (${count})`;
-      tsSelect.appendChild(o);
+      const o1 = document.createElement('option');
+      o1.value = t; o1.textContent = t;
+      startTimeSel.appendChild(o1);
+      const o2 = document.createElement('option');
+      o2.value = t; o2.textContent = t;
+      endTimeSel.appendChild(o2);
+    }
+    if(orderedTimestamps.length){
+      startTimeSel.value = orderedTimestamps[0];
+      endTimeSel.value = orderedTimestamps[0];
+    }
+  }
+
+  function populatePlayerList(players){
+    playerListDiv.innerHTML = '';
+    const names = [...new Set(players.map(p=>p.name))].sort();
+    for(const n of names){
+      const id = 'pl_'+n.replace(/\W+/g,'_');
+      const label = document.createElement('label');
+      const cb = document.createElement('input');
+      cb.type='checkbox'; cb.checked=true;
+      cb.addEventListener('change', ()=>{
+        if(cb.checked) selectedPlayers.add(n);
+        else selectedPlayers.delete(n);
+        renderRange();
+      });
+      label.appendChild(cb);
+      label.appendChild(document.createTextNode(' '+n));
+      playerListDiv.appendChild(label);
+      selectedPlayers.add(n);
     }
   }
 
@@ -178,68 +170,64 @@
     return { xpx, ypx };
   }
 
-  function renderDots(players){
-    currentPlayers = players;
+  function renderRange(){
     markers.innerHTML = '';
-    markers.style.width = imgW + 'px';
-    markers.style.height = imgH + 'px';
-    for(const p of players){
-      const { xpx, ypx } = worldToImagePx(p);
-      const d = document.createElement('div');
-      d.className = 'dot';
-      d.style.left = xpx + 'px';
-      d.style.top  = ypx + 'px';
-      d.setAttribute('data-info', `${p.name} (${p.x.toFixed(1)}, ${p.z.toFixed(1)})`);
-      d.addEventListener('click', (e)=> {
-        e.stopPropagation();
-        selectPlayer(p, xpx, ypx);
-      });
-      markers.appendChild(d);
-    }
-    applyTransform();
-  }
+    if(!orderedTimestamps.length) return;
 
-  function selectPlayer(player, xpx, ypx){
-    selectedPlayer = player;
-    radiusPanel.style.display = 'block';
-    updateRadiusDisplay();
-  }
+    const startIdx = orderedTimestamps.indexOf(startTimeSel.value);
+    const endIdx = orderedTimestamps.indexOf(endTimeSel.value);
+    if(startIdx < 0 || endIdx < 0) return;
 
-  function updateRadiusDisplay(){
-    if(!selectedPlayer) return;
-    const r = parseFloat(radiusSelect.value);
-    const { xpx, ypx } = worldToImagePx(selectedPlayer);
+    const [a,b] = [Math.min(startIdx,endIdx), Math.max(startIdx,endIdx)];
+    const range = orderedTimestamps.slice(a,b+1);
 
-    const radiusPx = (r / WORLD) * imgW;
-    radiusCircle.style.display = 'block';
-    radiusCircle.style.left = xpx + 'px';
-    radiusCircle.style.top  = ypx + 'px';
-    radiusCircle.style.width = (radiusPx*2) + 'px';
-    radiusCircle.style.height= (radiusPx*2) + 'px';
-
-    const inside = [];
-    for(const p of currentPlayers){
-      if(p===selectedPlayer) continue;
-      const dx = p.x - selectedPlayer.x;
-      const dz = p.z - selectedPlayer.z;
-      const dist = Math.sqrt(dx*dx + dz*dz);
-      if(dist <= r){
-        inside.push(`${p.name} (${dist.toFixed(1)})`);
+    // Build path history
+    const playerPaths = new Map();
+    for(const t of range){
+      for(const p of snapshots.get(t)){
+        if(!selectedPlayers.has(p.name)) continue;
+        if(!playerPaths.has(p.name)) playerPaths.set(p.name,[]);
+        playerPaths.get(p.name).push(p);
       }
     }
-    radiusResults.innerHTML = inside.length ? inside.join('<br>') : '<em>No players inside</em>';
+
+    for(const [name, positions] of playerPaths){
+      let prev=null;
+      for(const pos of positions){
+        const {xpx,ypx} = worldToImagePx(pos);
+        const d=document.createElement('div');
+        d.className='dot';
+        d.style.left=xpx+'px';
+        d.style.top=ypx+'px';
+        d.setAttribute('data-info', `${name} (${pos.x.toFixed(1)},${pos.z.toFixed(1)})`);
+        markers.appendChild(d);
+
+        if(prev){
+          const dx = xpx - prev.xpx, dy = ypx - prev.ypx;
+          const len = Math.sqrt(dx*dx+dy*dy);
+          const angle = Math.atan2(dy,dx)*180/Math.PI;
+          const line=document.createElement('div');
+          line.className='arrow';
+          line.style.left=prev.xpx+'px';
+          line.style.top=prev.ypx+'px';
+          line.style.width=len+'px';
+          line.style.transform=`rotate(${angle}deg)`;
+          markers.appendChild(line);
+        }
+        prev={xpx,ypx};
+      }
+    }
     applyTransform();
   }
 
   function applyTransform(){
     stage.style.transform = `translate(${tx}px, ${ty}px) scale(${scale})`;
-    const inv = 1/(scale*1.5);
     markers.querySelectorAll('.dot').forEach(el=>{
-      el.style.transform = `translate(-50%,-50%) scale(${inv})`;
+      el.style.transform = `translate(-50%,-50%) scale(${1/(scale*1.5)})`;
     });
-    if(radiusCircle.style.display!=='none'){
-      radiusCircle.style.transform = `translate(-50%,-50%) scale(${1/scale})`;
-    }
+    markers.querySelectorAll('.arrow').forEach(el=>{
+      el.style.transform += ` scaleX(${1/scale})`;
+    });
   }
 
   function fitToViewport(){
@@ -287,15 +275,9 @@
     applyTransform();
   });
 
-  viewport.addEventListener('dblclick', ()=> fitToViewport());
   fitBtn.addEventListener('click', fitToViewport);
-
-  tsSelect.addEventListener('change', ()=>{
-    const t = tsSelect.value;
-    renderDots(snapshots.get(t)||[]);
-  });
-
-  radiusSelect.addEventListener('change', updateRadiusDisplay);
+  startTimeSel.addEventListener('change', renderRange);
+  endTimeSel.addEventListener('change', renderRange);
 
   fileInput.addEventListener('change', e=>{
     if(!e.target.files[0]) return;
@@ -303,11 +285,10 @@
     reader.onload = ()=>{
       parseADM(reader.result);
       populateTimestamps();
-      if(orderedTimestamps.length){
-        tsSelect.value = orderedTimestamps[0];
-        renderDots(snapshots.get(orderedTimestamps[0]));
-        fitToViewport();
-      }
+      const allPlayers = [...snapshots.values()].flat();
+      populatePlayerList(allPlayers);
+      renderRange();
+      fitToViewport();
     };
     reader.readAsText(e.target.files[0]);
   });
