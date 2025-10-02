@@ -14,17 +14,21 @@
   .controls{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
   input[type=file]{display:none}
   .btn{background:transparent;border:1px solid rgba(255,255,255,0.06);padding:8px 12px;border-radius:8px;cursor:pointer;color:inherit}
-  select{padding:6px;border-radius:6px;background:var(--panel);color:inherit;border:1px solid rgba(255,255,255,0.08)}
+
   .panel{background:var(--panel);padding:12px;border-radius:10px;border:1px solid rgba(255,255,255,0.03);margin-bottom:10px}
+
   .viewport{position:relative;height:75vh;min-height:420px;border-radius:12px;border:1px solid rgba(255,255,255,0.06);overflow:hidden;background:#000;user-select:none;touch-action:none}
   .stage{position:absolute;left:0;top:0;transform-origin:0 0}
   .stage img{display:block}
   .overlay{position:absolute;left:0;top:0;width:100%;height:100%}
-  #playerControls{display:flex;gap:6px;margin:8px 0}
+
+  /* Player list */
+  #playerControls{display:flex;gap:6px;margin:10px 0}
   #playerList{max-height:180px;overflow:auto;font-size:0.9rem;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px}
   #playerList label{display:flex;gap:8px;align-items:center}
-  .colorInput{width:20px;height:20px;border:none;padding:0;border-radius:4px;cursor:pointer}
-  /* SVG styling that scales with zoom */
+  .colorInput{width:18px;height:18px;border:none;padding:0;cursor:pointer;background:transparent}
+
+  /* SVG appearance (scales with zoom) */
   .track{stroke-width:4;opacity:0.9;stroke-linecap:round}
   .poi{stroke:#fff;stroke-width:2}
   .poi:hover{filter:drop-shadow(0 0 6px rgba(255,255,255,0.6))}
@@ -36,13 +40,16 @@
       <h1>ADM Map Viewer</h1>
       <div class="controls">
         <label class="btn">📁 Upload ADM<input type="file" id="fileInput" accept=".txt,.log,.adm"/></label>
-        <div>Start: <select id="startTime"></select></div>
-        <div>End: <select id="endTime"></select></div>
         <button class="btn" id="fitBtn" title="Fit to screen">Fit</button>
       </div>
     </header>
 
+    <!-- Log pulling -->
     <div class="panel">
+      <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:center">
+        <div>Start: <select id="startTime"></select></div>
+        <div>End: <select id="endTime"></select></div>
+      </div>
       <div id="playerControls">
         <button class="btn" id="selectAllBtn">Select All</button>
         <button class="btn" id="clearAllBtn">Clear All</button>
@@ -52,9 +59,15 @@
 
     <div class="viewport panel" id="viewport">
       <div class="stage" id="stage">
+        <!-- Use your B/W map here -->
         <img id="map" src="map.jpg" alt="Map"/>
         <svg id="overlay" class="overlay" xmlns="http://www.w3.org/2000/svg">
-          <defs id="defs"></defs>
+          <defs>
+            <!-- Arrowhead that inherits stroke color (modern browsers support context-stroke) -->
+            <marker id="arrowhead" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
+              <path d="M0,0 L6,3 L0,6 Z" fill="context-stroke"></path>
+            </marker>
+          </defs>
           <g id="tracks"></g>
           <g id="dots"></g>
         </svg>
@@ -64,27 +77,26 @@
 
 <script>
 (() => {
-  const WORLD = 12800; // game world 0..12800 on X and Z
+  const WORLD = 12800; // world coords 0..12800 on X,Z
 
-  // DOM
+  // UI elements
   const fileInput = document.getElementById('fileInput');
-  const startTimeSel = document.getElementById('startTime');
-  const endTimeSel = document.getElementById('endTime');
-  const playerListDiv = document.getElementById('playerList');
-  const selectAllBtn = document.getElementById('selectAllBtn');
-  const clearAllBtn = document.getElementById('clearAllBtn');
-
   const viewport = document.getElementById('viewport');
   const stage = document.getElementById('stage');
   const mapImg = document.getElementById('map');
   const overlay = document.getElementById('overlay');
-  const defs = document.getElementById('defs');
   const gTracks = document.getElementById('tracks');
   const gDots = document.getElementById('dots');
   const fitBtn = document.getElementById('fitBtn');
 
+  const startTimeSel = document.getElementById('startTime');
+  const endTimeSel   = document.getElementById('endTime');
+  const playerListDiv = document.getElementById('playerList');
+  const selectAllBtn  = document.getElementById('selectAllBtn');
+  const clearAllBtn   = document.getElementById('clearAllBtn');
+
   // State
-  let snapshots = new Map();        // time -> [{name,id,x,z,y}]
+  let snapshots = new Map();     // time -> [{name,id,x,z,y}]
   let orderedTimestamps = [];
   let imgW = 0, imgH = 0;
 
@@ -92,16 +104,14 @@
   let scale = 1, tx = 0, ty = 0;
   const MIN_SCALE = 0.001, MAX_SCALE = 200;
 
-  // filters and styles
-  let selectedPlayers = new Set();
-  let playerColors = new Map();     // name -> hex color
-  const DEFAULT_COLOR = '#ff3333';  // all start red
+  // players
+  let selectedPlayers = new Set();     // names that are visible
+  let playerColors    = new Map();     // name -> hex color string (default #ff0000)
 
-  // Regex: only pure position lines
+  // parse only pure pos lines
   const lineRe =
     /^(?<time>\d{2}:\d{2}:\d{2})\s*\|\s*Player\s+"(?<name>.+?)"\s*\(id=(?<id>\d+)\s+pos=<\s*(?<x>[-+\d.]+)\s*,\s*(?<z>[-+\d.]+)\s*,\s*(?<y>[-+\d.]+)\s*>\)\s*$/i;
 
-  // Parse ADM
   function parseADM(text){
     snapshots.clear(); orderedTimestamps=[];
     for (const raw of text.split(/\r?\n/)) {
@@ -113,63 +123,26 @@
     }
   }
 
-  // Populate time dropdowns
   function populateTimestamps(){
     startTimeSel.innerHTML = '';
-    endTimeSel.innerHTML = '';
+    endTimeSel.innerHTML   = '';
     for (const t of orderedTimestamps){
       const o1 = document.createElement('option'); o1.value=t; o1.textContent=t; startTimeSel.appendChild(o1);
       const o2 = document.createElement('option'); o2.value=t; o2.textContent=t; endTimeSel.appendChild(o2);
     }
     if (orderedTimestamps.length){
       startTimeSel.value = orderedTimestamps[0];
-      endTimeSel.value = orderedTimestamps[0];
+      endTimeSel.value   = orderedTimestamps[0];
     }
   }
 
-  // Build player list for selected range; default select all + color = red
-  function populatePlayerListForRange(){
-    const paths = gatherPlayersInRange();
-    playerListDiv.innerHTML = '';
-    selectedPlayers.clear();
-
-    // Unique names in range
-    const names = [...paths.keys()].sort((a,b)=>a.localeCompare(b));
-    for (const n of names){
-      if (!playerColors.has(n)) playerColors.set(n, DEFAULT_COLOR);
-      const color = playerColors.get(n);
-
-      const label = document.createElement('label');
-
-      // Checkbox
-      const cb = document.createElement('input');
-      cb.type = 'checkbox'; cb.checked = true;
-      cb.addEventListener('change', ()=>{
-        if (cb.checked) selectedPlayers.add(n);
-        else selectedPlayers.delete(n);
-        renderRange();
-      });
-
-      // Color picker
-      const colorInput = document.createElement('input');
-      colorInput.type = 'color';
-      colorInput.value = color;
-      colorInput.className = 'colorInput';
-      colorInput.addEventListener('input', ()=>{
-        playerColors.set(n, colorInput.value);
-        renderRange();
-      });
-
-      label.appendChild(cb);
-      label.appendChild(colorInput);
-      label.appendChild(document.createTextNode(' ' + n));
-      playerListDiv.appendChild(label);
-
-      selectedPlayers.add(n);
-    }
+  function worldToImagePx(p){
+    return {
+      xpx: (p.x / WORLD) * imgW,
+      ypx: imgH - (p.z / WORLD) * imgH
+    };
   }
 
-  // Gather paths in start..end inclusive
   function gatherPlayersInRange(){
     const a = orderedTimestamps.indexOf(startTimeSel.value);
     const b = orderedTimestamps.indexOf(endTimeSel.value);
@@ -186,50 +159,62 @@
     return map;
   }
 
-  // World→image px
-  function worldToImagePx(p){
-    return {
-      xpx: (p.x / WORLD) * imgW,
-      ypx: imgH - (p.z / WORLD) * imgH
-    };
-  }
-
-  // Arrowhead marker per color (so arrow matches line)
-  const markerCache = new Map(); // color -> markerId
   function darkerColor(hex){
+    // hex like #rrggbb
     const c = hex.replace('#','');
-    let r = parseInt(c.slice(0,2),16);
-    let g = parseInt(c.slice(2,4),16);
-    let b = parseInt(c.slice(4,6),16);
-    r = Math.max(0, Math.min(255, Math.round(r*0.7)));
-    g = Math.max(0, Math.min(255, Math.round(g*0.7)));
-    b = Math.max(0, Math.min(255, Math.round(b*0.7)));
+    const r = Math.floor(parseInt(c.substr(0,2),16) * 0.6);
+    const g = Math.floor(parseInt(c.substr(2,2),16) * 0.6);
+    const b = Math.floor(parseInt(c.substr(4,2),16) * 0.6);
     return `rgb(${r},${g},${b})`;
   }
-  function markerForColor(colorHex){
-    if (markerCache.has(colorHex)) return markerCache.get(colorHex);
-    const id = `arrow_${colorHex.replace('#','')}_${Math.random().toString(36).slice(2,7)}`;
-    const marker = document.createElementNS('http://www.w3.org/2000/svg','marker');
-    marker.setAttribute('id', id);
-    marker.setAttribute('markerWidth','6');
-    marker.setAttribute('markerHeight','6');
-    marker.setAttribute('refX','5');
-    marker.setAttribute('refY','3');
-    marker.setAttribute('orient','auto');
-    // arrow path
-    const path = document.createElementNS('http://www.w3.org/2000/svg','path');
-    path.setAttribute('d','M0,0 L6,3 L0,6 Z');
-    path.setAttribute('fill', colorHex);
-    marker.appendChild(path);
-    defs.appendChild(marker);
-    markerCache.set(colorHex, id);
-    return id;
+
+  function ensureDefaults(names){
+    // Default everyone to red and selected
+    for (const n of names){
+      if (!playerColors.has(n)) playerColors.set(n, '#ff0000');
+      selectedPlayers.add(n);
+    }
   }
 
-  // Render range
+  function populatePlayerListForRange(){
+    const paths = gatherPlayersInRange();
+    const names = [...paths.keys()].sort((a,b)=>a.localeCompare(b));
+    ensureDefaults(names);
+
+    playerListDiv.innerHTML = '';
+    for (const n of names){
+      const color = playerColors.get(n) || '#ff0000';
+
+      const label = document.createElement('label');
+
+      const cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.checked = selectedPlayers.has(n);
+      cb.addEventListener('change', ()=>{
+        if (cb.checked) selectedPlayers.add(n);
+        else selectedPlayers.delete(n);
+        renderRange();
+      });
+
+      const colorInput = document.createElement('input');
+      colorInput.type = 'color';
+      colorInput.value = color;
+      colorInput.className = 'colorInput';
+      colorInput.addEventListener('input', ()=>{
+        playerColors.set(n, colorInput.value);
+        renderRange();
+      });
+
+      label.appendChild(cb);
+      label.appendChild(colorInput);
+      label.appendChild(document.createTextNode(' ' + n));
+      playerListDiv.appendChild(label);
+    }
+  }
+
   function renderRange(){
     gTracks.innerHTML = '';
-    gDots.innerHTML = '';
+    gDots.innerHTML   = '';
     if (!orderedTimestamps.length) return;
 
     const paths = gatherPlayersInRange();
@@ -238,30 +223,28 @@
       if (!selectedPlayers.has(name)) return;
       positions.sort((a,b) => orderedTimestamps.indexOf(a.time) - orderedTimestamps.indexOf(b.time));
 
-      const dotColor = playerColors.get(name) || DEFAULT_COLOR;
-      const lineColor = darkerColor(dotColor);
-      const markerId = markerForColor(lineColor);
+      const color = playerColors.get(name) || '#ff0000';
+      const lineColor = darkerColor(color);
 
-      // Lines (offset from dot edges)
+      // Draw segments (offset from dot edges)
       if (positions.length > 1){
-        for (let i=1; i<positions.length; i++){
+        for (let i = 1; i < positions.length; i++){
           const p0 = worldToImagePx(positions[i-1]);
           const p1 = worldToImagePx(positions[i]);
           const dx = p1.xpx - p0.xpx;
           const dy = p1.ypx - p0.ypx;
-          const len = Math.hypot(dx,dy) || 1;
-          const offset = 15; // match dot radius
-          const ox = (dx/len)*offset;
-          const oy = (dy/len)*offset;
+          const len = Math.hypot(dx, dy) || 1;
+          const DOT_R = 15;
+          const offset = DOT_R + 2; // small gap from circle edge
+          const ox = (dx/len) * offset;
+          const oy = (dy/len) * offset;
 
-          const line = document.createElementNS('http://www.w3.org/2000/svg','line');
-          line.setAttribute('x1', p0.xpx + ox);
-          line.setAttribute('y1', p0.ypx + oy);
-          line.setAttribute('x2', p1.xpx - ox);
-          line.setAttribute('y2', p1.ypx - oy);
-          line.setAttribute('class','track');
+          const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+          line.setAttribute('x1', p0.xpx + ox); line.setAttribute('y1', p0.ypx + oy);
+          line.setAttribute('x2', p1.xpx - ox); line.setAttribute('y2', p1.ypx - oy);
+          line.setAttribute('class', 'track');
           line.setAttribute('stroke', lineColor);
-          line.setAttribute('marker-end', `url(#${markerId})`);
+          line.setAttribute('marker-end', 'url(#arrowhead)');
           gTracks.appendChild(line);
         }
       }
@@ -274,7 +257,7 @@
         c.setAttribute('cy', ypx);
         c.setAttribute('r', 15);
         c.setAttribute('class', 'poi');
-        c.setAttribute('fill', dotColor);
+        c.setAttribute('fill', color);
         const title = document.createElementNS('http://www.w3.org/2000/svg','title');
         title.textContent = `${name} @ ${pos.time} (${pos.x.toFixed(1)}, ${pos.z.toFixed(1)})`;
         c.appendChild(title);
@@ -285,7 +268,7 @@
     applyTransform();
   }
 
-  // Pan/zoom
+  /* ---------- Pan / Zoom ---------- */
   function clampPan(){
     const vw = viewport.clientWidth, vh = viewport.clientHeight;
     const w = imgW*scale, h = imgH*scale;
@@ -294,10 +277,12 @@
     if (h <= vh) ty = (vh - h)/2;
     else { const minTy = vh - h; const maxTy = 0; ty = Math.min(maxTy, Math.max(minTy, ty)); }
   }
+
   function applyTransform(){
     clampPan();
     stage.style.transform = `translate(${tx}px, ${ty}px) scale(${scale})`;
   }
+
   function fitToViewport(){
     if (!imgW || !imgH) return;
     const vw = viewport.clientWidth, vh = viewport.clientHeight;
@@ -306,6 +291,7 @@
     ty = (vh - imgH*scale)/2;
     applyTransform();
   }
+
   function zoomAt(cx, cy, factor){
     const old = scale;
     let next = Math.max(MIN_SCALE, Math.min(MAX_SCALE, scale*factor));
@@ -335,40 +321,45 @@
     applyTransform();
   });
 
-  // Buttons
+  /* ---------- Events ---------- */
   fitBtn.addEventListener('click', fitToViewport);
-  startTimeSel.addEventListener('change', ()=>{ populatePlayerListForRange(); renderRange(); });
-  endTimeSel.addEventListener('change', ()=>{ populatePlayerListForRange(); renderRange(); });
-  selectAllBtn.addEventListener('click', ()=>{
-    // Check all boxes and select everyone
-    selectedPlayers = new Set(playerColors.keys());
-    playerListDiv.querySelectorAll('label input[type=checkbox]').forEach(cb => cb.checked = true);
+
+  startTimeSel.addEventListener('change', ()=>{
+    populatePlayerListForRange();
     renderRange();
   });
-  clearAllBtn.addEventListener('click', ()=>{
-    // Uncheck all and clear selection
-    selectedPlayers.clear();
-    playerListDiv.querySelectorAll('label input[type=checkbox]').forEach(cb => cb.checked = false);
+  endTimeSel.addEventListener('change', ()=>{
+    populatePlayerListForRange();
     renderRange();
   });
 
-  // File load
+  selectAllBtn.addEventListener('click', ()=>{
+    const paths = gatherPlayersInRange();
+    selectedPlayers = new Set(paths.keys());
+    // check all boxes
+    playerListDiv.querySelectorAll('input[type=checkbox]').forEach(cb => cb.checked = true);
+    renderRange();
+  });
+  clearAllBtn.addEventListener('click', ()=>{
+    selectedPlayers.clear();
+    // uncheck all boxes
+    playerListDiv.querySelectorAll('input[type=checkbox]').forEach(cb => cb.checked = false);
+    renderRange();
+  });
+
   fileInput.addEventListener('change', e=>{
     const f = e.target.files?.[0]; if (!f) return;
     const reader = new FileReader();
     reader.onload = ()=>{
       parseADM(String(reader.result||'')); 
       populateTimestamps();
-      // reset colors/selection so new file always starts all red + selected
-      playerColors = new Map();
-      populatePlayerListForRange();
+      populatePlayerListForRange();  // sets everyone red & selected
       renderRange();
       fitToViewport();
     };
     reader.readAsText(f);
   });
 
-  // Map load
   mapImg.addEventListener('load', ()=>{
     imgW = mapImg.naturalWidth;
     imgH = mapImg.naturalHeight;
