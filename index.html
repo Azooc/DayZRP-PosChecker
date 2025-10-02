@@ -212,11 +212,11 @@
 
     const baseDotSize=25;
     const baseStroke=2;
-    const baseLine=4.5;
+    const baseLine=2.5;
 
     const raw = fitScale / scale;
-    const dotFactor = Math.min(2.5, Math.max(0.5, raw));
-    const lineFactor = Math.min(1.5, Math.max(0.6, raw));
+    const dotFactor = Math.min(2.5, Math.max(0.2, raw));
+    const lineFactor = Math.min(2.5, Math.max(0.3, raw));
 
     const dotSize=baseDotSize*dotFactor;
     const strokeW=baseStroke*dotFactor;
