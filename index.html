@@ -26,14 +26,11 @@
   #playerControls{display:flex;gap:6px;margin:10px 0}
   #playerList{max-height:180px;overflow:auto;font-size:0.9rem;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px}
   #playerList label{display:flex;gap:8px;align-items:center}
-
-  .colorSwatch{
-    width:18px;height:18px;border-radius:50%;cursor:pointer;border:2px solid #fff3;
-  }
+  .colorInput{width:20px;height:20px;padding:0;border:none;cursor:pointer;}
 
   /* SVG appearance */
-  .track{opacity:0.9;stroke-linecap:round}
-  .poi{stroke:#fff;stroke-width:2}
+  .track{stroke-width:2.5;opacity:0.9;stroke-linecap:round} /* thinner lines */
+  .poi{stroke:#fff;stroke-width:1.5} /* smaller border around dots */
 </style>
 </head>
 <body>
@@ -64,7 +61,7 @@
         <img id="map" src="map.jpg" alt="Map"/>
         <svg id="overlay" class="overlay" xmlns="http://www.w3.org/2000/svg">
           <defs>
-            <marker id="arrowhead" orient="auto" markerUnits="userSpaceOnUse">
+            <marker id="arrowhead" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
               <path d="M0,0 L6,3 L0,6 Z" fill="context-stroke"></path>
             </marker>
           </defs>
@@ -161,6 +158,7 @@
     }
   }
 
+  // ----- Player List -----
   function populatePlayerListForRange(){
     const paths=gatherPlayersInRange();
     const names=[...paths.keys()].sort((a,b)=>a.localeCompare(b));
@@ -174,7 +172,7 @@
       const cb=document.createElement('input');
       cb.type='checkbox';cb.checked=selectedPlayers.has(n);
       cb.addEventListener('change',()=>{
-        if(cb.checked){ selectedPlayers.add(n); }
+        if(cb.checked){selectedPlayers.add(n);}
         else {selectedPlayers.delete(n);}
         renderRange();
       });
@@ -182,7 +180,7 @@
       const colorInput=document.createElement('input');
       colorInput.type='color';
       colorInput.value=color;
-      colorInput.className='colorSwatch';
+      colorInput.className='colorInput';
       colorInput.addEventListener('input',()=>{
         playerColors.set(n,colorInput.value);
         renderRange();
@@ -199,18 +197,6 @@
   function renderRange(){
     gTracks.innerHTML='';gDots.innerHTML='';
     const paths=gatherPlayersInRange();
-
-    const dotRadius = 15 / scale;
-    const lineWidth = 4 / scale;
-    const arrowSize = 6 / scale;
-
-    // update marker size dynamically
-    const marker = document.getElementById('arrowhead');
-    marker.setAttribute('markerWidth', arrowSize);
-    marker.setAttribute('markerHeight', arrowSize);
-    marker.setAttribute('refX', arrowSize - 1);
-    marker.setAttribute('refY', arrowSize/2);
-
     paths.forEach((positions,name)=>{
       if(!selectedPlayers.has(name))return;
       const color=playerColors.get(name)||'#ff0000';
@@ -222,12 +208,11 @@
           const p0=worldToImagePx(positions[i-1]);
           const p1=worldToImagePx(positions[i]);
           const dx=p1.xpx-p0.xpx,dy=p1.ypx-p0.ypx,len=Math.hypot(dx,dy)||1;
-          const offset=dotRadius+2;const ox=(dx/len)*offset,oy=(dy/len)*offset;
+          const offset=8;const ox=(dx/len)*offset,oy=(dy/len)*offset; // adjusted offset for smaller dots
           const line=document.createElementNS('http://www.w3.org/2000/svg','line');
           line.setAttribute('x1',p0.xpx+ox);line.setAttribute('y1',p0.ypx+oy);
           line.setAttribute('x2',p1.xpx-ox);line.setAttribute('y2',p1.ypx-oy);
           line.setAttribute('class','track');line.setAttribute('stroke',lineColor);
-          line.setAttribute('stroke-width',lineWidth);
           line.setAttribute('marker-end','url(#arrowhead)');
           gTracks.appendChild(line);
         }
@@ -236,7 +221,7 @@
       for(const pos of positions){
         const {xpx,ypx}=worldToImagePx(pos);
         const c=document.createElementNS('http://www.w3.org/2000/svg','circle');
-        c.setAttribute('cx',xpx);c.setAttribute('cy',ypx);c.setAttribute('r',dotRadius);
+        c.setAttribute('cx',xpx);c.setAttribute('cy',ypx);c.setAttribute('r',8); // smaller radius
         c.setAttribute('class','poi');c.setAttribute('fill',color);
         gDots.appendChild(c);
       }
@@ -259,8 +244,7 @@
   }
   function zoomAt(cx,cy,f){
     const old=scale;let next=Math.max(MIN_SCALE,Math.min(MAX_SCALE,scale*f));
-    const k=next/old;const sx=(cx-tx),sy=(cy-ty);tx=cx-sx*k;ty=cy-sy*k;scale=next;renderRange();
-    applyTransform();
+    const k=next/old;const sx=(cx-tx),sy=(cy-ty);tx=cx-sx*k;ty=cy-sy*k;scale=next;applyTransform();
   }
   viewport.addEventListener('wheel',e=>{
     e.preventDefault();const rect=viewport.getBoundingClientRect();
