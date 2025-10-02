@@ -29,11 +29,11 @@
   .colorInput{width:20px;height:20px;padding:0;border:none;cursor:pointer;}
 
   /* SVG appearance */
-  .track{stroke-width:2.5;opacity:0.9;stroke-linecap:round}
-  .poi{stroke:#fff;stroke-width:1.5;transition:all 0.15s ease;}
-  .poi.hovered{stroke:#fff;stroke-width:2.5;filter:brightness(1.4);r:14;}
+  .track{opacity:0.9;stroke-linecap:round}
+  .poi{transition:all 0.15s ease;}
+  .poi.hovered{filter:brightness(1.4);}
 
-  /* Custom tooltip */
+  /* Tooltip */
   #tooltip {
     position:absolute;
     background:#222;
@@ -87,12 +87,11 @@
     </div>
   </div>
 
-  <!-- Tooltip -->
   <div id="tooltip"></div>
 
 <script>
 (() => {
-  const WORLD = 12800;
+  const WORLD=12800;
 
   const fileInput=document.getElementById('fileInput');
   const viewport=document.getElementById('viewport');
@@ -211,11 +210,16 @@
 
   function renderRange(){
     gTracks.innerHTML='';gDots.innerHTML='';
+    tooltip.style.display='none'; // hide tooltip whenever we redraw
+
     const paths=gatherPlayersInRange();
     const baseDotSize=10; // size at fit scale
-    const baseLine=2.5;   // line thickness at fit scale
-    const dotSize=baseDotSize*(fitScale/scale);
-    const lineW=baseLine*(fitScale/scale);
+    const baseStroke=2;
+    const baseLine=2.5;
+
+    const dotSize=Math.max(2, baseDotSize*(fitScale/scale));
+    const strokeW=Math.max(1, baseStroke*(fitScale/scale));
+    const lineW=Math.max(0.5, baseLine*(fitScale/scale));
 
     paths.forEach((positions,name)=>{
       if(!selectedPlayers.has(name))return;
@@ -242,11 +246,13 @@
       for(const pos of positions){
         const {xpx,ypx}=worldToImagePx(pos);
         const c=document.createElementNS('http://www.w3.org/2000/svg','circle');
-        c.setAttribute('cx',xpx);c.setAttribute('cy',ypx);c.setAttribute('r',dotSize);
+        c.setAttribute('cx',xpx);c.setAttribute('cy',ypx);
+        c.setAttribute('r',dotSize);
+        c.setAttribute('stroke-width',strokeW);
         c.setAttribute('class','poi');c.setAttribute('fill',color);
+        c.setAttribute('stroke','#fff');
 
-        // Hover highlight + tooltip
-        c.addEventListener('mouseenter',(e)=>{
+        c.addEventListener('mouseenter',()=>{
           c.classList.add('hovered');
           tooltip.style.display='block';
           tooltip.textContent=`${name}\n${pos.time}\nX:${pos.x.toFixed(1)} Z:${pos.z.toFixed(1)} Y:${pos.y.toFixed(1)}`;
@@ -278,13 +284,14 @@
     const vw=viewport.clientWidth,vh=viewport.clientHeight;
     scale=Math.min(vw/imgW,vh/imgH);
     fitScale=scale;
-    MIN_SCALE=fitScale; // prevent zooming out beyond fit
+    MIN_SCALE=fitScale;
     tx=(vw-imgW*scale)/2;ty=(vh-imgH*scale)/2;
     applyTransform();
   }
   function zoomAt(cx,cy,f){
     const old=scale;let next=Math.max(MIN_SCALE,Math.min(MAX_SCALE,scale*f));
-    const k=next/old;const sx=(cx-tx),sy=(cy-ty);tx=cx-sx*k;ty=cy-sy*k;scale=next;renderRange();applyTransform();
+    const k=next/old;const sx=(cx-tx),sy=(cy-ty);tx=cx-sx*k;ty=cy-sy*k;scale=next;
+    renderRange();applyTransform();
   }
 
   viewport.addEventListener('wheel',e=>{
