@@ -214,13 +214,13 @@
     const baseStroke=2;
     const baseLine=2.5;
 
-    // bounded scaling factor
     const raw = fitScale / scale;
-    const factor = Math.min(4, Math.max(0.05, raw));
+    const dotFactor = Math.min(2.5, Math.max(0.5, raw));
+    const lineFactor = Math.min(1.5, Math.max(0.6, raw));
 
-    const dotSize=baseDotSize*factor;
-    const strokeW=baseStroke*factor;
-    const lineW=baseLine*factor;
+    const dotSize=baseDotSize*dotFactor;
+    const strokeW=baseStroke*dotFactor;
+    const lineW=baseLine*lineFactor;
 
     paths.forEach((positions,name)=>{
       if(!selectedPlayers.has(name))return;
@@ -233,7 +233,8 @@
           const p0=worldToImagePx(positions[i-1]);
           const p1=worldToImagePx(positions[i]);
           const dx=p1.xpx-p0.xpx,dy=p1.ypx-p0.ypx,len=Math.hypot(dx,dy)||1;
-          const offset=dotSize+2;const ox=(dx/len)*offset,oy=(dy/len)*offset;
+          const offset=dotSize*0.6+2;
+          const ox=(dx/len)*offset,oy=(dy/len)*offset;
           const line=document.createElementNS('http://www.w3.org/2000/svg','line');
           line.setAttribute('x1',p0.xpx+ox);line.setAttribute('y1',p0.ypx+oy);
           line.setAttribute('x2',p1.xpx-ox);line.setAttribute('y2',p1.ypx-oy);
