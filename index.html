@@ -22,11 +22,11 @@
   .overlay{position:absolute;left:0;top:0;width:100%;height:100%}
   #playerList{max-height:150px;overflow:auto;font-size:0.9rem;margin-top:8px;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:4px}
   #playerList label{display:flex;gap:6px;align-items:center}
+  .colorDot{width:12px;height:12px;border-radius:50%;}
   /* SVG styling */
-  .track{stroke:#7dd3fc;stroke-width:3;opacity:0.85;vector-effect:non-scaling-stroke;stroke-linecap:round}
-  .poi{fill:#ff4d4d;stroke:rgba(255,255,255,0.85);stroke-width:1.5;vector-effect:non-scaling-stroke}
+  .track{stroke-width:3;opacity:0.8;vector-effect:non-scaling-stroke;stroke-linecap:round}
+  .poi{r:8;stroke:rgba(255,255,255,0.85);stroke-width:1.5;vector-effect:non-scaling-stroke}
   .poi:hover{filter:drop-shadow(0 0 6px rgba(255,255,255,0.6))}
-  .poi-label{pointer-events:none}
 </style>
 </head>
 <body>
@@ -39,7 +39,6 @@
       </div>
     </header>
 
-    <!-- Log pulling panel -->
     <div class="panel">
       <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
         <div>Start: <select id="startTime"></select></div>
@@ -51,11 +50,10 @@
     <div class="viewport panel" id="viewport">
       <div class="stage" id="stage">
         <img id="map" src="map.jpg" alt="Map"/>
-        <!-- SVG overlay draws paths & dots precisely -->
         <svg id="overlay" class="overlay" xmlns="http://www.w3.org/2000/svg">
           <defs>
-            <marker id="arrowhead" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto" markerUnits="strokeWidth">
-              <path d="M0,0 L10,5 L0,10 Z" fill="#7dd3fc"></path>
+            <marker id="arrowhead" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto" markerUnits="strokeWidth">
+              <path d="M0,0 L6,3 L0,6 Z"></path>
             </marker>
           </defs>
           <g id="tracks"></g>
@@ -67,7 +65,7 @@
 
 <script>
 (() => {
-  const WORLD = 12800; // 0..12800 on both axes (X left→right, Z bottom→top)
+  const WORLD = 12800;
 
   const fileInput = document.getElementById('fileInput');
   const viewport = document.getElementById('viewport');
@@ -82,18 +80,15 @@
   const endTimeSel = document.getElementById('endTime');
   const playerListDiv = document.getElementById('playerList');
 
-  let snapshots = new Map();         // time -> [{name,id,x,z,y}]
+  let snapshots = new Map();
   let orderedTimestamps = [];
   let imgW = 0, imgH = 0;
 
-  // pan/zoom
   let scale = 1, tx = 0, ty = 0;
   const MIN_SCALE = 0.001, MAX_SCALE = 200;
 
-  // filtering
   let selectedPlayers = new Set();
 
-  // Parsing: only pure position lines
   const lineRe =
     /^(?<time>\d{2}:\d{2}:\d{2})\s*\|\s*Player\s+"(?<name>.+?)"\s*\(id=(?<id>\d+)\s+pos=<\s*(?<x>[-+\d.]+)\s*,\s*(?<z>[-+\d.]+)\s*,\s*(?<y>[-+\d.]+)\s*>\)\s*$/i;
 
@@ -122,9 +117,10 @@
   }
 
   function worldToImagePx(p){
-    const xpx = (p.x / WORLD) * imgW;
-    const ypx = imgH - (p.z / WORLD) * imgH;
-    return { xpx, ypx };
+    return {
+      xpx: (p.x / WORLD) * imgW,
+      ypx: imgH - (p.z / WORLD) * imgH
+    };
   }
 
   function gatherPlayersInRange(){
@@ -133,7 +129,7 @@
     if (a < 0 || b < 0) return new Map();
     const [i0, i1] = [Math.min(a,b), Math.max(a,b)];
     const range = orderedTimestamps.slice(i0, i1+1);
-    const map = new Map(); // name -> [positions]
+    const map = new Map();
     for (const t of range){
       for (const p of snapshots.get(t) || []){
         if (!map.has(p.name)) map.set(p.name, []);
@@ -143,18 +139,32 @@
     return map;
   }
 
+  function hashColor(name){
+    let h=0; for(let i=0;i<name.length;i++) h=(h*31+name.charCodeAt(i))>>>0;
+    const r=(h&255), g=((h>>8)&255), b=((h>>16)&255);
+    return `rgb(${r},${g},${b})`;
+  }
+
+  function darkerColor(rgb){
+    const m = rgb.match(/\d+/g).map(Number);
+    return `rgb(${m[0]*0.6},${m[1]*0.6},${m[2]*0.6})`;
+  }
+
   function populatePlayerListForRange(){
     const paths = gatherPlayersInRange();
     playerListDiv.innerHTML = '';
     selectedPlayers.clear();
     const names = [...paths.keys()].sort((a,b)=>a.localeCompare(b));
     for (const n of names){
+      const color = hashColor(n);
       const id = 'p_'+n.replace(/\W+/g,'_');
       const label = document.createElement('label');
       const cb = document.createElement('input');
       cb.type = 'checkbox'; cb.checked = true;
       cb.addEventListener('change', ()=>{ if(cb.checked) selectedPlayers.add(n); else selectedPlayers.delete(n); renderRange(); });
+      const cd = document.createElement('span'); cd.className='colorDot'; cd.style.background=color;
       label.appendChild(cb);
+      label.appendChild(cd);
       label.appendChild(document.createTextNode(' '+n));
       playerListDiv.appendChild(label);
       selectedPlayers.add(n);
@@ -168,35 +178,42 @@
 
     const paths = gatherPlayersInRange();
 
-    // Draw lines and dots
     paths.forEach((positions, name) => {
       if (!selectedPlayers.has(name)) return;
-      // Sort positions by timestamp order inside the selected range
       positions.sort((a,b) => orderedTimestamps.indexOf(a.time) - orderedTimestamps.indexOf(b.time));
+      const color = hashColor(name);
+      const lineColor = darkerColor(color);
 
-      // Lines between consecutive positions
+      // Lines
       if (positions.length > 1){
         for (let i=1; i<positions.length; i++){
           const p0 = worldToImagePx(positions[i-1]);
           const p1 = worldToImagePx(positions[i]);
+          const dx = p1.xpx - p0.xpx;
+          const dy = p1.ypx - p0.ypx;
+          const len = Math.hypot(dx,dy);
+          const offset = 10; // offset distance from dot edges
+          const ox = (dx/len)*offset;
+          const oy = (dy/len)*offset;
           const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
-          line.setAttribute('x1', p0.xpx); line.setAttribute('y1', p0.ypx);
-          line.setAttribute('x2', p1.xpx); line.setAttribute('y2', p1.ypx);
+          line.setAttribute('x1', p0.xpx+ox); line.setAttribute('y1', p0.ypx+oy);
+          line.setAttribute('x2', p1.xpx-ox); line.setAttribute('y2', p1.ypx-oy);
           line.setAttribute('class', 'track');
+          line.setAttribute('stroke', lineColor);
           line.setAttribute('marker-end', 'url(#arrowhead)');
           gTracks.appendChild(line);
         }
       }
 
-      // Dots at each recorded position
+      // Dots
       for (const pos of positions){
         const { xpx, ypx } = worldToImagePx(pos);
         const c = document.createElementNS('http://www.w3.org/2000/svg','circle');
         c.setAttribute('cx', xpx);
         c.setAttribute('cy', ypx);
-        c.setAttribute('r', 5);
+        c.setAttribute('r', 10);
         c.setAttribute('class', 'poi');
-        // Tooltip
+        c.setAttribute('fill', color);
         const title = document.createElementNS('http://www.w3.org/2000/svg','title');
         title.textContent = `${name} @ ${pos.time} (${pos.x.toFixed(1)}, ${pos.z.toFixed(1)})`;
         c.appendChild(title);
@@ -210,10 +227,8 @@
   function clampPan(){
     const vw = viewport.clientWidth, vh = viewport.clientHeight;
     const w = imgW*scale, h = imgH*scale;
-
     if (w <= vw) tx = (vw - w)/2;
     else { const minTx = vw - w; const maxTx = 0; tx = Math.min(maxTx, Math.max(minTx, tx)); }
-
     if (h <= vh) ty = (vh - h)/2;
     else { const minTy = vh - h; const maxTy = 0; ty = Math.min(maxTy, Math.max(minTy, ty)); }
   }
@@ -236,7 +251,6 @@
     const old = scale;
     let next = Math.max(MIN_SCALE, Math.min(MAX_SCALE, scale*factor));
     const k = next/old;
-    // zoom toward cursor
     const sx = (cx - tx);
     const sy = (cy - ty);
     tx = cx - sx * k;
@@ -245,7 +259,6 @@
     applyTransform();
   }
 
-  // Zoom & pan handlers
   viewport.addEventListener('wheel', (e)=>{
     e.preventDefault();
     const rect = viewport.getBoundingClientRect();
@@ -271,7 +284,7 @@
     const f = e.target.files?.[0]; if (!f) return;
     const reader = new FileReader();
     reader.onload = ()=>{
-      parseADM(String(reader.result||''));
+      parseADM(String(reader.result||'')); 
       populateTimestamps();
       populatePlayerListForRange();
       renderRange();
@@ -283,7 +296,6 @@
   mapImg.addEventListener('load', ()=>{
     imgW = mapImg.naturalWidth;
     imgH = mapImg.naturalHeight;
-    // Size the overlay to the map pixels
     overlay.setAttribute('viewBox', `0 0 ${imgW} ${imgH}`);
     overlay.setAttribute('width', imgW);
     overlay.setAttribute('height', imgH);
