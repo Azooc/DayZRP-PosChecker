@@ -26,26 +26,7 @@
   #playerControls{display:flex;gap:6px;margin:10px 0}
   #playerList{max-height:180px;overflow:auto;font-size:0.9rem;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px}
   #playerList label{display:flex;gap:8px;align-items:center}
-
-  .colorSwatch{
-    width:18px;height:18px;border-radius:50%;cursor:pointer;border:2px solid #fff3;
-  }
-
-  /* Color wheel popup */
-  .colorWheelBox {
-    position:absolute;
-    z-index:2000;
-    display:none;
-    background:var(--panel);
-    border:1px solid rgba(255,255,255,0.15);
-    border-radius:12px;
-    padding:10px;
-    box-shadow:0 4px 12px rgba(0,0,0,0.6);
-  }
-  #colorWheel {
-    display:block;
-    border-radius:50%;
-  }
+  .colorInput{width:20px;height:20px;padding:0;border:none;cursor:pointer;}
 
   /* SVG appearance */
   .track{stroke-width:4;opacity:0.9;stroke-linecap:round}
@@ -91,113 +72,218 @@
     </div>
   </div>
 
-  <!-- Color wheel popup -->
-  <div id="colorWheelBox" class="colorWheelBox">
-    <canvas id="colorWheel" width="160" height="160"></canvas>
-  </div>
-
 <script>
 (() => {
   const WORLD = 12800;
-  const BRIGHT_COLORS = ["#ff0000","#00ff00","#0000ff","#ff00ff","#00ffff","#ffff00","#ff8800","#00ff88","#8800ff","#ff0088","#88ff00","#0088ff"];
-  let usedColors = new Set();
 
+  const fileInput = document.getElementById('fileInput');
+  const viewport = document.getElementById('viewport');
+  const stage = document.getElementById('stage');
+  const mapImg = document.getElementById('map');
+  const overlay = document.getElementById('overlay');
+  const gTracks = document.getElementById('tracks');
+  const gDots = document.getElementById('dots');
+  const fitBtn = document.getElementById('fitBtn');
+  const startTimeSel = document.getElementById('startTime');
+  const endTimeSel   = document.getElementById('endTime');
   const playerListDiv = document.getElementById('playerList');
-  const colorWheelBox = document.getElementById('colorWheelBox');
-  const colorWheel = document.getElementById('colorWheel');
-  const ctx = colorWheel.getContext('2d');
-  const wheelSize = 160;
-
-  // Draw color wheel
-  function hslToRgb(h,s,l){let r,g,b;if(s===0){r=g=b=l;}else{const hue2rgb=(p,q,t)=>{if(t<0)t+=1;if(t>1)t-=1;if(t<1/6)return p+(q-p)*6*t;if(t<1/2)return q;if(t<2/3)return p+(q-p)*(2/3-t)*6;return p;};const q=l<0.5?l*(1+s):l+s-l*s;const p=2*l-q;r=hue2rgb(p,q,h+1/3);g=hue2rgb(p,q,h);b=hue2rgb(p,q,h-1/3);}return[Math.round(r*255),Math.round(g*255),Math.round(b*255)];}
-  function drawWheel(){
-    const r=wheelSize/2;
-    const image=ctx.createImageData(wheelSize,wheelSize);
-    const data=image.data;
-    for(let y=0;y<wheelSize;y++){
-      for(let x=0;x<wheelSize;x++){
-        const dx=x-r,dy=y-r,dist=Math.sqrt(dx*dx+dy*dy);
-        if(dist<=r){
-          let angle=Math.atan2(dy,dx)*180/Math.PI;
-          if(angle<0) angle+=360;
-          const [rr,gg,bb]=hslToRgb(angle/360,1,0.5);
-          const idx=(y*wheelSize+x)*4;
-          data[idx]=rr;data[idx+1]=gg;data[idx+2]=bb;data[idx+3]=255;
-        }
-      }
-    }
-    ctx.putImageData(image,0,0);
-  }
-  drawWheel();
-  function getColorAt(e){
-    const rect=colorWheel.getBoundingClientRect();
-    const x=Math.floor(e.clientX-rect.left);
-    const y=Math.floor(e.clientY-rect.top);
-    const d=ctx.getImageData(x,y,1,1).data;
-    return `rgb(${d[0]},${d[1]},${d[2]})`;
-  }
+  const selectAllBtn  = document.getElementById('selectAllBtn');
+  const clearAllBtn   = document.getElementById('clearAllBtn');
 
   // State
-  let playerColors=new Map(), selectedPlayers=new Set(), currentColorTarget=null;
+  let snapshots=new Map(), orderedTimestamps=[];
+  let imgW=0,imgH=0;
+  let scale=1,tx=0,ty=0;
+  const MIN_SCALE=0.001, MAX_SCALE=200;
+  let selectedPlayers=new Set();
+  let playerColors=new Map();
 
-  function autoAssignColor(n){
-    for(const c of BRIGHT_COLORS){
-      if(!usedColors.has(c)){
-        playerColors.set(n,c);
-        usedColors.add(c);
-        return;
-      }
+  const lineRe=/^(?<time>\d{2}:\d{2}:\d{2})\s*\|\s*Player\s+"(?<name>.+?)"\s*\(id=(?<id>\d+)\s+pos=<\s*(?<x>[-+\d.]+)\s*,\s*(?<z>[-+\d.]+)\s*,\s*(?<y>[-+\d.]+)\s*>\)\s*$/i;
+
+  // ----- Parsing -----
+  function parseADM(text){
+    snapshots.clear();orderedTimestamps=[];
+    for(const raw of text.split(/\r?\n/)){
+      const m=raw.match(lineRe);if(!m) continue;
+      const {time,name,id,x,z,y}=m.groups;
+      if(!snapshots.has(time)){snapshots.set(time,[]);orderedTimestamps.push(time);}
+      snapshots.get(time).push({name,id,x:+x,z:+z,y:+y});
     }
-    playerColors.set(n,`hsl(${Math.random()*360},100%,50%)`);
   }
 
-  function populatePlayerList(names){
-    playerListDiv.innerHTML='';
-    names.forEach(n=>{
+  function populateTimestamps(){
+    startTimeSel.innerHTML='';endTimeSel.innerHTML='';
+    for(const t of orderedTimestamps){
+      const o1=document.createElement('option');o1.value=t;o1.textContent=t;startTimeSel.appendChild(o1);
+      const o2=document.createElement('option');o2.value=t;o2.textContent=t;endTimeSel.appendChild(o2);
+    }
+    if(orderedTimestamps.length){
+      startTimeSel.value=orderedTimestamps[0];
+      endTimeSel.value=orderedTimestamps[0];
+    }
+  }
+
+  function worldToImagePx(p){
+    return {xpx:(p.x/WORLD)*imgW,ypx:imgH-(p.z/WORLD)*imgH};
+  }
+
+  function darkerColor(hex){
+    const tmp=document.createElement("canvas");
+    const c2=tmp.getContext("2d");
+    c2.fillStyle=hex;c2.fillRect(0,0,1,1);
+    const [r,g,b]=c2.getImageData(0,0,1,1).data;
+    return `rgb(${r*0.6},${g*0.6},${b*0.6})`;
+  }
+
+  function gatherPlayersInRange(){
+    const a=orderedTimestamps.indexOf(startTimeSel.value);
+    const b=orderedTimestamps.indexOf(endTimeSel.value);
+    if(a<0||b<0)return new Map();
+    const [i0,i1]=[Math.min(a,b),Math.max(a,b)];
+    const range=orderedTimestamps.slice(i0,i1+1);
+    const map=new Map();
+    for(const t of range){
+      for(const p of snapshots.get(t)||[]){
+        if(!map.has(p.name))map.set(p.name,[]);
+        map.get(p.name).push({...p,time:t});
+      }
+    }
+    return map;
+  }
+
+  function ensureDefaults(names){
+    for(const n of names){
       if(!playerColors.has(n)) playerColors.set(n,'#ff0000');
       selectedPlayers.add(n);
+    }
+  }
 
+  // ----- Player List -----
+  function populatePlayerListForRange(){
+    const paths=gatherPlayersInRange();
+    const names=[...paths.keys()].sort((a,b)=>a.localeCompare(b));
+    ensureDefaults(names);
+    playerListDiv.innerHTML='';
+
+    for(const n of names){
+      const color=playerColors.get(n)||'#ff0000';
       const label=document.createElement('label');
+
       const cb=document.createElement('input');
       cb.type='checkbox';cb.checked=selectedPlayers.has(n);
       cb.addEventListener('change',()=>{
-        if(cb.checked){
-          selectedPlayers.add(n);
-          if(playerColors.get(n)==='#ff0000'){autoAssignColor(n);}
-        } else selectedPlayers.delete(n);
-        populatePlayerList(names); // refresh swatches
+        if(cb.checked){selectedPlayers.add(n);}
+        else {selectedPlayers.delete(n);}
+        renderRange();
       });
 
-      const swatch=document.createElement('div');
-      swatch.className='colorSwatch';
-      swatch.style.background=playerColors.get(n);
-      swatch.addEventListener('click',(e)=>{
-        currentColorTarget=n;
-        colorWheelBox.style.display='block';
-        colorWheelBox.style.left=(e.pageX-90)+'px';
-        colorWheelBox.style.top=(e.pageY-90)+'px';
+      const colorInput=document.createElement('input');
+      colorInput.type='color';
+      colorInput.value=color;
+      colorInput.className='colorInput';
+      colorInput.addEventListener('input',()=>{
+        playerColors.set(n,colorInput.value);
+        renderRange();
       });
 
       label.appendChild(cb);
-      label.appendChild(swatch);
+      label.appendChild(colorInput);
       label.appendChild(document.createTextNode(' '+n));
       playerListDiv.appendChild(label);
-    });
+    }
   }
 
-  // Wheel click
-  colorWheel.addEventListener('click',e=>{
-    if(!currentColorTarget)return;
-    const c=getColorAt(e);
-    playerColors.set(currentColorTarget,c);
-    usedColors.add(c);
-    currentColorTarget=null;
-    colorWheelBox.style.display='none';
-    populatePlayerList([...playerColors.keys()]);
+  // ----- Rendering -----
+  function renderRange(){
+    gTracks.innerHTML='';gDots.innerHTML='';
+    const paths=gatherPlayersInRange();
+    paths.forEach((positions,name)=>{
+      if(!selectedPlayers.has(name))return;
+      const color=playerColors.get(name)||'#ff0000';
+      const lineColor=darkerColor(color);
+      positions.sort((a,b)=>orderedTimestamps.indexOf(a.time)-orderedTimestamps.indexOf(b.time));
+
+      if(positions.length>1){
+        for(let i=1;i<positions.length;i++){
+          const p0=worldToImagePx(positions[i-1]);
+          const p1=worldToImagePx(positions[i]);
+          const dx=p1.xpx-p0.xpx,dy=p1.ypx-p0.ypx,len=Math.hypot(dx,dy)||1;
+          const offset=15+2;const ox=(dx/len)*offset,oy=(dy/len)*offset;
+          const line=document.createElementNS('http://www.w3.org/2000/svg','line');
+          line.setAttribute('x1',p0.xpx+ox);line.setAttribute('y1',p0.ypx+oy);
+          line.setAttribute('x2',p1.xpx-ox);line.setAttribute('y2',p1.ypx-oy);
+          line.setAttribute('class','track');line.setAttribute('stroke',lineColor);
+          line.setAttribute('marker-end','url(#arrowhead)');
+          gTracks.appendChild(line);
+        }
+      }
+
+      for(const pos of positions){
+        const {xpx,ypx}=worldToImagePx(pos);
+        const c=document.createElementNS('http://www.w3.org/2000/svg','circle');
+        c.setAttribute('cx',xpx);c.setAttribute('cy',ypx);c.setAttribute('r',15);
+        c.setAttribute('class','poi');c.setAttribute('fill',color);
+        gDots.appendChild(c);
+      }
+    });
+    applyTransform();
+  }
+
+  // ----- Pan/Zoom -----
+  function clampPan(){
+    const vw=viewport.clientWidth,vh=viewport.clientHeight;
+    const w=imgW*scale,h=imgH*scale;
+    if(w<=vw)tx=(vw-w)/2;else{const minTx=vw-w,maxTx=0;tx=Math.min(maxTx,Math.max(minTx,tx));}
+    if(h<=vh)ty=(vh-h)/2;else{const minTy=vh-h,maxTy=0;ty=Math.min(maxTy,Math.max(minTy,ty));}
+  }
+  function applyTransform(){clampPan();stage.style.transform=`translate(${tx}px,${ty}px) scale(${scale})`;}
+  function fitToViewport(){
+    if(!imgW||!imgH)return;
+    const vw=viewport.clientWidth,vh=viewport.clientHeight;
+    scale=Math.min(vw/imgW,vh/imgH);tx=(vw-imgW*scale)/2;ty=(vh-imgH*scale)/2;applyTransform();
+  }
+  function zoomAt(cx,cy,f){
+    const old=scale;let next=Math.max(MIN_SCALE,Math.min(MAX_SCALE,scale*f));
+    const k=next/old;const sx=(cx-tx),sy=(cy-ty);tx=cx-sx*k;ty=cy-sy*k;scale=next;applyTransform();
+  }
+  viewport.addEventListener('wheel',e=>{
+    e.preventDefault();const rect=viewport.getBoundingClientRect();
+    zoomAt(e.clientX-rect.left,e.clientY-rect.top,(e.deltaY<0)?1.15:1/1.15);
+  },{passive:false});
+  let dragging=false,lx=0,ly=0;
+  viewport.addEventListener('mousedown',e=>{dragging=true;lx=e.clientX;ly=e.clientY;});
+  window.addEventListener('mouseup',()=>dragging=false);
+  window.addEventListener('mousemove',e=>{
+    if(!dragging)return;tx+=(e.clientX-lx);ty+=(e.clientY-ly);lx=e.clientX;ly=e.clientY;applyTransform();
   });
 
-  // Demo list
-  populatePlayerList(["Alice","Bob","Charlie"]);
+  // ----- Events -----
+  fitBtn.addEventListener('click',fitToViewport);
+  startTimeSel.addEventListener('change',()=>{populatePlayerListForRange();renderRange();});
+  endTimeSel.addEventListener('change',()=>{populatePlayerListForRange();renderRange();});
+  selectAllBtn.addEventListener('click',()=>{
+    const paths=gatherPlayersInRange();selectedPlayers=new Set(paths.keys());
+    playerListDiv.querySelectorAll('input[type=checkbox]').forEach(cb=>cb.checked=true);
+    [...paths.keys()].forEach(n=>playerColors.set(n,'#ff0000'));renderRange();
+  });
+  clearAllBtn.addEventListener('click',()=>{
+    selectedPlayers.clear();
+    playerListDiv.querySelectorAll('input[type=checkbox]').forEach(cb=>cb.checked=false);
+    renderRange();
+  });
+
+  fileInput.addEventListener('change',e=>{
+    const f=e.target.files?.[0];if(!f)return;
+    const reader=new FileReader();
+    reader.onload=()=>{parseADM(String(reader.result||''));populateTimestamps();populatePlayerListForRange();renderRange();fitToViewport();};
+    reader.readAsText(f);
+  });
+  mapImg.addEventListener('load',()=>{
+    imgW=mapImg.naturalWidth;imgH=mapImg.naturalHeight;
+    overlay.setAttribute('viewBox',`0 0 ${imgW} ${imgH}`);
+    overlay.setAttribute('width',imgW);overlay.setAttribute('height',imgH);
+    stage.style.width=imgW+'px';stage.style.height=imgH+'px';fitToViewport();
+  });
 })();
 </script>
 </body>
