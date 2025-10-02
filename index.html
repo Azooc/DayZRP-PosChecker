@@ -17,7 +17,7 @@
 
   .panel{background:var(--panel);padding:12px;border-radius:10px;border:1px solid rgba(255,255,255,0.03);margin-bottom:10px}
 
-  .viewport{position:relative;height:70vh;min-height:420px;border-radius:12px;border:1px solid rgba(255,255,255,0.06);overflow:hidden;background:#000;user-select:none;touch-action:none}
+  .viewport{position:relative;height:75vh;min-height:420px;border-radius:12px;border:1px solid rgba(255,255,255,0.06);overflow:hidden;background:#000;user-select:none;touch-action:none}
   .stage{position:absolute;left:0;top:0;transform-origin:0 0}
   .stage img{display:block}
   .overlay{position:absolute;left:0;top:0;width:100%;height:100%}
@@ -42,26 +42,6 @@
     white-space:pre;
     z-index:3000;
     display:none;
-  }
-
-  #debugInputs {
-    display:grid;
-    grid-template-columns:repeat(auto-fill,minmax(120px,1fr));
-    gap:8px;
-    font-size:0.8rem;
-    margin-top:8px;
-  }
-  #debugInputs label {
-    display:flex;
-    flex-direction:column;
-    gap:2px;
-  }
-  #debugInputs input {
-    padding:2px;
-    border-radius:4px;
-    border:1px solid #444;
-    background:#111;
-    color:#eee;
   }
 </style>
 </head>
@@ -101,19 +81,6 @@
         </svg>
       </div>
     </div>
-
-    <div class="panel">
-      <h3 style="margin:0 0 6px 0;font-size:1rem">Debug Controls</h3>
-      <div id="debugInputs">
-        <label>Base Dot Size<input type="number" id="baseDotSize" value="10" step="0.5"></label>
-        <label>Base Stroke<input type="number" id="baseStroke" value="2" step="0.5"></label>
-        <label>Base Line<input type="number" id="baseLine" value="2.5" step="0.5"></label>
-        <label>Dot Min<input type="number" id="dotMin" value="0.5" step="0.1"></label>
-        <label>Dot Max<input type="number" id="dotMax" value="2.5" step="0.1"></label>
-        <label>Line Min<input type="number" id="lineMin" value="0.6" step="0.1"></label>
-        <label>Line Max<input type="number" id="lineMax" value="1.5" step="0.1"></label>
-      </div>
-    </div>
   </div>
 
   <div id="tooltip"></div>
@@ -137,23 +104,21 @@
   const clearAllBtn=document.getElementById('clearAllBtn');
   const tooltip=document.getElementById('tooltip');
 
-  // Debug inputs
-  const debug = {
-    baseDotSize: document.getElementById('baseDotSize'),
-    baseStroke: document.getElementById('baseStroke'),
-    baseLine: document.getElementById('baseLine'),
-    dotMin: document.getElementById('dotMin'),
-    dotMax: document.getElementById('dotMax'),
-    lineMin: document.getElementById('lineMin'),
-    lineMax: document.getElementById('lineMax'),
-  };
-
   let snapshots=new Map(),orderedTimestamps=[];
   let imgW=0,imgH=0;
   let scale=1,tx=0,ty=0,fitScale=1;
   let MIN_SCALE=0.001,MAX_SCALE=200;
   let selectedPlayers=new Set();
   let playerColors=new Map();
+
+  // ---- Hardcoded scaling values ----
+  const baseDotSize=25;
+  const baseStroke=5;
+  const baseLine=10;
+  const dotMin=0.04;
+  const dotMax=25;
+  const lineMin=0.04;
+  const lineMax=1.5;
 
   const lineRe=/^(?<time>\d{2}:\d{2}:\d{2})\s*\|\s*Player\s+"(?<name>.+?)"\s*\(id=(?<id>\d+)\s+pos=<\s*(?<x>[-+\d.]+)\s*,\s*(?<z>[-+\d.]+)\s*,\s*(?<y>[-+\d.]+)\s*>\)\s*$/i;
 
@@ -254,13 +219,9 @@
 
     const paths=gatherPlayersInRange();
 
-    const baseDotSize=parseFloat(debug.baseDotSize.value);
-    const baseStroke=parseFloat(debug.baseStroke.value);
-    const baseLine=parseFloat(debug.baseLine.value);
-
-    const raw = fitScale / scale;
-    const dotFactor = Math.min(parseFloat(debug.dotMax.value), Math.max(parseFloat(debug.dotMin.value), raw));
-    const lineFactor = Math.min(parseFloat(debug.lineMax.value), Math.max(parseFloat(debug.lineMin.value), raw));
+    const raw=fitScale/scale;
+    const dotFactor=Math.min(dotMax,Math.max(dotMin,raw));
+    const lineFactor=Math.min(lineMax,Math.max(lineMin,raw));
 
     const dotSize=baseDotSize*dotFactor;
     const strokeW=baseStroke*dotFactor;
@@ -277,8 +238,7 @@
           const p0=worldToImagePx(positions[i-1]);
           const p1=worldToImagePx(positions[i]);
           const dx=p1.xpx-p0.xpx,dy=p1.ypx-p0.ypx,len=Math.hypot(dx,dy)||1;
-          const offset=dotSize*0.6+2;
-          const ox=(dx/len)*offset,oy=(dy/len)*offset;
+          const offset=dotSize+2;const ox=(dx/len)*offset,oy=(dy/len)*offset;
           const line=document.createElementNS('http://www.w3.org/2000/svg','line');
           line.setAttribute('x1',p0.xpx+ox);line.setAttribute('y1',p0.ypx+oy);
           line.setAttribute('x2',p1.xpx-ox);line.setAttribute('y2',p1.ypx-oy);
@@ -363,10 +323,6 @@
     selectedPlayers.clear();
     playerListDiv.querySelectorAll('input[type=checkbox]').forEach(cb=>cb.checked=false);
     renderRange();
-  });
-
-  Object.values(debug).forEach(input=>{
-    input.addEventListener('input',()=>renderRange());
   });
 
   fileInput.addEventListener('change',e=>{
