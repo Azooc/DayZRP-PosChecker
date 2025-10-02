@@ -216,7 +216,7 @@
 
     // bounded scaling factor
     const raw = fitScale / scale;
-    const factor = Math.min(2, Math.max(0.1, raw));
+    const factor = Math.min(4, Math.max(0.05, raw));
 
     const dotSize=baseDotSize*factor;
     const strokeW=baseStroke*factor;
