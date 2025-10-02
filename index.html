@@ -20,10 +20,10 @@
   .stage{position:absolute;left:0;top:0;transform-origin:0 0}
   .stage img{display:block}
   .overlay{position:absolute;left:0;top:0;width:100%;height:100%}
+  #playerControls{display:flex;gap:6px;margin-bottom:6px}
   #playerList{max-height:150px;overflow:auto;font-size:0.9rem;margin-top:8px;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:4px}
   #playerList label{display:flex;gap:6px;align-items:center}
-  .colorDot{width:12px;height:12px;border-radius:50%;}
-  /* SVG styling */
+  .colorInput{width:18px;height:18px;border:none;padding:0;cursor:pointer}
   .track{stroke-width:4;opacity:0.9;stroke-linecap:round}
   .poi{stroke:#fff;stroke-width:2}
   .poi:hover{filter:drop-shadow(0 0 6px rgba(255,255,255,0.6))}
@@ -43,6 +43,10 @@
       <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
         <div>Start: <select id="startTime"></select></div>
         <div>End: <select id="endTime"></select></div>
+      </div>
+      <div id="playerControls">
+        <button class="btn" id="selectAllBtn">Select All</button>
+        <button class="btn" id="clearAllBtn">Clear All</button>
       </div>
       <div id="playerList"></div>
     </div>
@@ -79,6 +83,8 @@
   const startTimeSel = document.getElementById('startTime');
   const endTimeSel = document.getElementById('endTime');
   const playerListDiv = document.getElementById('playerList');
+  const selectAllBtn = document.getElementById('selectAllBtn');
+  const clearAllBtn = document.getElementById('clearAllBtn');
 
   let snapshots = new Map();
   let orderedTimestamps = [];
@@ -88,13 +94,7 @@
   const MIN_SCALE = 0.001, MAX_SCALE = 200;
 
   let selectedPlayers = new Set();
-
-  const COLORS = [
-    "#1f77b4","#ff7f0e","#2ca02c","#d62728","#9467bd",
-    "#8c564b","#e377c2","#7f7f7f","#bcbd22","#17becf",
-    "#e41a1c","#377eb8","#4daf4a","#984ea3","#ff7f00",
-    "#ffff33","#a65628","#f781bf","#999999"
-  ];
+  let playerColors = new Map();
 
   const lineRe =
     /^(?<time>\d{2}:\d{2}:\d{2})\s*\|\s*Player\s+"(?<name>.+?)"\s*\(id=(?<id>\d+)\s+pos=<\s*(?<x>[-+\d.]+)\s*,\s*(?<z>[-+\d.]+)\s*,\s*(?<y>[-+\d.]+)\s*>\)\s*$/i;
@@ -146,34 +146,39 @@
     return map;
   }
 
-  function getColor(name){
-    const idx = Math.abs(name.split('').reduce((a,c)=>a+c.charCodeAt(0),0)) % COLORS.length;
-    return COLORS[idx];
-  }
-  function darkerColor(hex){
-    const c = hex.replace('#','');
-    const r = parseInt(c.substr(0,2),16)*0.6;
-    const g = parseInt(c.substr(2,2),16)*0.6;
-    const b = parseInt(c.substr(4,2),16)*0.6;
-    return `rgb(${r},${g},${b})`;
-  }
-
   function populatePlayerListForRange(){
     const paths = gatherPlayersInRange();
     playerListDiv.innerHTML = '';
     selectedPlayers.clear();
     const names = [...paths.keys()].sort((a,b)=>a.localeCompare(b));
+
     for (const n of names){
-      const color = getColor(n);
+      if (!playerColors.has(n)) playerColors.set(n, "#ff0000"); // default red
+      const color = playerColors.get(n);
+
       const label = document.createElement('label');
       const cb = document.createElement('input');
       cb.type = 'checkbox'; cb.checked = true;
-      cb.addEventListener('change', ()=>{ if(cb.checked) selectedPlayers.add(n); else selectedPlayers.delete(n); renderRange(); });
-      const cd = document.createElement('span'); cd.className='colorDot'; cd.style.background=color;
+      cb.addEventListener('change', ()=>{ 
+        if(cb.checked) selectedPlayers.add(n); 
+        else selectedPlayers.delete(n); 
+        renderRange(); 
+      });
+
+      const colorInput = document.createElement('input');
+      colorInput.type = 'color';
+      colorInput.value = color;
+      colorInput.className = 'colorInput';
+      colorInput.addEventListener('input', ()=>{
+        playerColors.set(n, colorInput.value);
+        renderRange();
+      });
+
       label.appendChild(cb);
-      label.appendChild(cd);
+      label.appendChild(colorInput);
       label.appendChild(document.createTextNode(' '+n));
       playerListDiv.appendChild(label);
+
       selectedPlayers.add(n);
     }
   }
@@ -188,8 +193,7 @@
     paths.forEach((positions, name) => {
       if (!selectedPlayers.has(name)) return;
       positions.sort((a,b) => orderedTimestamps.indexOf(a.time) - orderedTimestamps.indexOf(b.time));
-      const color = getColor(name);
-      const lineColor = darkerColor(color);
+      const color = playerColors.get(name) || "#ff0000";
 
       // Lines
       if (positions.length > 1){
@@ -199,14 +203,14 @@
           const dx = p1.xpx - p0.xpx;
           const dy = p1.ypx - p0.ypx;
           const len = Math.hypot(dx,dy);
-          const offset = 15; // offset distance from dot edges
+          const offset = 15;
           const ox = (dx/len)*offset;
           const oy = (dy/len)*offset;
           const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
           line.setAttribute('x1', p0.xpx+ox); line.setAttribute('y1', p0.ypx+oy);
           line.setAttribute('x2', p1.xpx-ox); line.setAttribute('y2', p1.ypx-oy);
           line.setAttribute('class', 'track');
-          line.setAttribute('stroke', lineColor);
+          line.setAttribute('stroke', color);
           line.setAttribute('marker-end', 'url(#arrowhead)');
           gTracks.appendChild(line);
         }
@@ -286,6 +290,17 @@
   fitBtn.addEventListener('click', fitToViewport);
   startTimeSel.addEventListener('change', ()=>{ populatePlayerListForRange(); renderRange(); });
   endTimeSel.addEventListener('change', ()=>{ populatePlayerListForRange(); renderRange(); });
+
+  selectAllBtn.addEventListener('click', ()=>{
+    selectedPlayers = new Set(playerColors.keys());
+    playerListDiv.querySelectorAll('input[type=checkbox]').forEach(cb => cb.checked = true);
+    renderRange();
+  });
+  clearAllBtn.addEventListener('click', ()=>{
+    selectedPlayers.clear();
+    playerListDiv.querySelectorAll('input[type=checkbox]').forEach(cb => cb.checked = false);
+    renderRange();
+  });
 
   fileInput.addEventListener('change', e=>{
     const f = e.target.files?.[0]; if (!f) return;
