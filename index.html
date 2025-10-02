@@ -29,8 +29,8 @@
   .colorInput{width:20px;height:20px;padding:0;border:none;cursor:pointer;}
 
   /* SVG appearance */
-  .track{stroke-width:2.5;opacity:0.9;stroke-linecap:round} /* thinner lines */
-  .poi{stroke:#fff;stroke-width:1.5} /* smaller border around dots */
+  .track{stroke-width:2.5;opacity:0.9;stroke-linecap:round}
+  .poi{stroke:#fff;stroke-width:1.5}
 </style>
 </head>
 <body>
@@ -90,7 +90,6 @@
   const selectAllBtn  = document.getElementById('selectAllBtn');
   const clearAllBtn   = document.getElementById('clearAllBtn');
 
-  // State
   let snapshots=new Map(), orderedTimestamps=[];
   let imgW=0,imgH=0;
   let scale=1,tx=0,ty=0;
@@ -100,7 +99,6 @@
 
   const lineRe=/^(?<time>\d{2}:\d{2}:\d{2})\s*\|\s*Player\s+"(?<name>.+?)"\s*\(id=(?<id>\d+)\s+pos=<\s*(?<x>[-+\d.]+)\s*,\s*(?<z>[-+\d.]+)\s*,\s*(?<y>[-+\d.]+)\s*>\)\s*$/i;
 
-  // ----- Parsing -----
   function parseADM(text){
     snapshots.clear();orderedTimestamps=[];
     for(const raw of text.split(/\r?\n/)){
@@ -158,7 +156,6 @@
     }
   }
 
-  // ----- Player List -----
   function populatePlayerListForRange(){
     const paths=gatherPlayersInRange();
     const names=[...paths.keys()].sort((a,b)=>a.localeCompare(b));
@@ -193,7 +190,6 @@
     }
   }
 
-  // ----- Rendering -----
   function renderRange(){
     gTracks.innerHTML='';gDots.innerHTML='';
     const paths=gatherPlayersInRange();
@@ -208,7 +204,7 @@
           const p0=worldToImagePx(positions[i-1]);
           const p1=worldToImagePx(positions[i]);
           const dx=p1.xpx-p0.xpx,dy=p1.ypx-p0.ypx,len=Math.hypot(dx,dy)||1;
-          const offset=8;const ox=(dx/len)*offset,oy=(dy/len)*offset; // adjusted offset for smaller dots
+          const offset=8;const ox=(dx/len)*offset,oy=(dy/len)*offset;
           const line=document.createElementNS('http://www.w3.org/2000/svg','line');
           line.setAttribute('x1',p0.xpx+ox);line.setAttribute('y1',p0.ypx+oy);
           line.setAttribute('x2',p1.xpx-ox);line.setAttribute('y2',p1.ypx-oy);
@@ -221,15 +217,20 @@
       for(const pos of positions){
         const {xpx,ypx}=worldToImagePx(pos);
         const c=document.createElementNS('http://www.w3.org/2000/svg','circle');
-        c.setAttribute('cx',xpx);c.setAttribute('cy',ypx);c.setAttribute('r',8); // smaller radius
+        c.setAttribute('cx',xpx);c.setAttribute('cy',ypx);c.setAttribute('r',8);
         c.setAttribute('class','poi');c.setAttribute('fill',color);
+
+        // Tooltip info on hover
+        const title=document.createElementNS('http://www.w3.org/2000/svg','title');
+        title.textContent=`${name}\n${pos.time}\nX:${pos.x.toFixed(1)} Z:${pos.z.toFixed(1)} Y:${pos.y.toFixed(1)}`;
+        c.appendChild(title);
+
         gDots.appendChild(c);
       }
     });
     applyTransform();
   }
 
-  // ----- Pan/Zoom -----
   function clampPan(){
     const vw=viewport.clientWidth,vh=viewport.clientHeight;
     const w=imgW*scale,h=imgH*scale;
@@ -257,7 +258,6 @@
     if(!dragging)return;tx+=(e.clientX-lx);ty+=(e.clientY-ly);lx=e.clientX;ly=e.clientY;applyTransform();
   });
 
-  // ----- Events -----
   fitBtn.addEventListener('click',fitToViewport);
   startTimeSel.addEventListener('change',()=>{populatePlayerListForRange();renderRange();});
   endTimeSel.addEventListener('change',()=>{populatePlayerListForRange();renderRange();});
