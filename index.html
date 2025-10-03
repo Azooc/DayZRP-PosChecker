@@ -22,25 +22,27 @@
   .stage img{display:block}
   .overlay{position:absolute;left:0;top:0;width:100%;height:100%}
 
+  /* Player list */
   #playerControls{display:flex;gap:6px;margin:10px 0}
   #playerList{max-height:180px;overflow:auto;font-size:0.9rem;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px}
   #playerList label{display:flex;gap:8px;align-items:center}
   .colorInput{width:20px;height:20px;padding:0;border:none;cursor:pointer;}
 
+  /* SVG appearance (tracks & dots) */
   .track{opacity:0.9;stroke-linecap:round}
-  .poi{transition:all 0.15s ease;}
+  .poi{transition:filter 0.15s ease;}
   .poi.hovered{filter:brightness(1.4);}
 
-  /* Kill X pulse */
-  .kill-x{
-    transform-box: fill-box;
-    transform-origin: center;
-    animation: killPulse 1.3s ease-out infinite;
+  /* Kill log X + pulse halo (pulse is separate to avoid jitter) */
+  .killX { stroke: #ff0000; stroke-width: 3; fill: none; pointer-events: all; }
+  .killPulse { stroke: #ff0000; stroke-opacity: 0.8; fill: none; }
+  @keyframes pulseHalo {
+    0%   { stroke-opacity: 0.7; }
+    70%  { stroke-opacity: 0.0; }
+    100% { stroke-opacity: 0.0; }
   }
-  @keyframes killPulse{
-    0%   { transform:scale(1);   opacity:1; }
-    55%  { transform:scale(1.15);opacity:0.95; }
-    100% { transform:scale(1);   opacity:1; }
+  .pulsing .killPulse {
+    animation: pulseHalo 1.6s infinite ease-out;
   }
 
   #tooltip {
@@ -55,7 +57,6 @@
     z-index:3000;
     display:none;
   }
-  .checkbox{display:inline-flex;gap:8px;align-items:center}
 </style>
 </head>
 <body>
@@ -68,11 +69,12 @@
       </div>
     </header>
 
+    <!-- Controls -->
     <div class="panel">
       <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:center">
         <div>Start: <select id="startTime"></select></div>
         <div>End: <select id="endTime"></select></div>
-        <label class="checkbox"><input type="checkbox" id="killToggle"> Kill Logs</label>
+        <label style="display:flex;gap:6px;align-items:center"><input type="checkbox" id="killLogsChk"/> Kill Logs</label>
       </div>
       <div id="playerControls">
         <button class="btn" id="selectAllBtn">Select All</button>
@@ -81,6 +83,7 @@
       <div id="playerList"></div>
     </div>
 
+    <!-- Map -->
     <div class="viewport panel" id="viewport">
       <div class="stage" id="stage">
         <img id="map" src="map.jpg" alt="Map"/>
@@ -93,7 +96,6 @@
           <g id="tracks"></g>
           <g id="dots"></g>
           <g id="kills"></g>
-          <g id="highlights"></g>
         </svg>
       </div>
     </div>
@@ -103,99 +105,107 @@
 
 <script>
 (() => {
-  const WORLD=12800;
+  const WORLD = 12800;
 
-  const fileInput=document.getElementById('fileInput');
-  const viewport=document.getElementById('viewport');
-  const stage=document.getElementById('stage');
-  const mapImg=document.getElementById('map');
-  const overlay=document.getElementById('overlay');
-  const gTracks=document.getElementById('tracks');
-  const gDots=document.getElementById('dots');
-  const gKills=document.getElementById('kills');
-  const gHighlights=document.getElementById('highlights');
-  const fitBtn=document.getElementById('fitBtn');
-  const startTimeSel=document.getElementById('startTime');
-  const endTimeSel=document.getElementById('endTime');
-  const playerListDiv=document.getElementById('playerList');
-  const selectAllBtn=document.getElementById('selectAllBtn');
-  const clearAllBtn=document.getElementById('clearAllBtn');
-  const tooltip=document.getElementById('tooltip');
-  const killToggle=document.getElementById('killToggle');
+  // Elements
+  const fileInput = document.getElementById('fileInput');
+  const viewport = document.getElementById('viewport');
+  const stage = document.getElementById('stage');
+  const mapImg = document.getElementById('map');
+  const overlay = document.getElementById('overlay');
+  const gTracks = document.getElementById('tracks');
+  const gDots   = document.getElementById('dots');
+  const gKills  = document.getElementById('kills');
 
-  let snapshots=new Map(),orderedTimestamps=[];
-  let killEvents=[];       // PvP
-  let aiDeaths=[];         // AI kills
-  let suicides=[];         // suicides
-  let imgW=0,imgH=0;
-  let scale=1,tx=0,ty=0,fitScale=1;
-  let MIN_SCALE=0.001,MAX_SCALE=200;
-  let selectedPlayers=new Set();
-  let playerColors=new Map();
+  const fitBtn = document.getElementById('fitBtn');
+  const startTimeSel = document.getElementById('startTime');
+  const endTimeSel   = document.getElementById('endTime');
+  const playerListDiv = document.getElementById('playerList');
+  const selectAllBtn  = document.getElementById('selectAllBtn');
+  const clearAllBtn   = document.getElementById('clearAllBtn');
+  const killLogsChk   = document.getElementById('killLogsChk');
+  const tooltip = document.getElementById('tooltip');
 
-  // Tuned sizes
-  const baseDotSize=25, baseStroke=5, baseLine=10;
-  const dotMin=0.02, dotMax=25, lineMin=0.04, lineMax=1.5;
+  // State
+  let snapshots = new Map(); // time -> [{name,id,x,z,y}]
+  let orderedTimestamps = [];
+  let kills = []; // array of kill events (pvp/ai/suicide)
+  let imgW=0, imgH=0;
+
+  // pan/zoom
+  let scale=1, tx=0, ty=0, fitScale=1;
+  let MIN_SCALE=0.001, MAX_SCALE=200;
+
+  // players
+  let selectedPlayers = new Set();
+  let playerColors    = new Map();
+
+  // Scaling constants (hard-coded from your picked settings)
+  const baseDotSize = 25;
+  const baseStroke  = 5;
+  const baseLine    = 10;
+  const dotMin = 0.02, dotMax = 25;
+  const lineMin = 0.04, lineMax = 1.5;
 
   // Regexes
-  const posRe=/^(?<time>\d{2}:\d{2}:\d{2})\s*\|\s*Player\s+"(?<name>.+?)"\s*\(id=(?<id>\d+)\s+pos=<\s*(?<x>[-+\d.]+)\s*,\s*(?<z>[-+\d.]+)\s*,\s*(?<y>[-+\d.]+)\s*>\)\s*$/i;
+  const posRe = /^(?<time>\d{2}:\d{2}:\d{2})\s*\|\s*Player\s+"(?<name>.+?)"\s*\(id=(?<id>\d+)\s+pos=<\s*(?<x>[-+\d.]+)\s*,\s*(?<z>[-+\d.]+)\s*,\s*(?<y>[-+\d.]+)\s*>\)\s*$/i;
 
-  const killRe=/^(?<time>\d{2}:\d{2}:\d{2})\s*\|\s*Player\s+"(?<victim>.+?)"\s*\(DEAD\)\s*\(id=(?<vid>\d+)\s+pos=<\s*(?<vx>[-+\d.]+)\s*,\s*(?<vz>[-+\d.]+)\s*,\s*(?<vy>[-+\d.]+)\s*>\)\s*killed by\s*Player\s+"(?<killer>.+?)"\s*\(id=(?<kid>\d+)\s+pos=<\s*(?<kx>[-+\d.]+)\s*,\s*(?<kz>[-+\d.]+)\s*,\s*(?<ky>[-+\d.]+)\s*>\)\s*with\s*(?<weapon>.+?)\s*from\s*(?<dist>[-+\d.]+)\s*meters\s*$/i;
+  // PVP kill (attacker is Player)
+  const killRePVP =
+    /^(?<time>\d{2}:\d{2}:\d{2}) \| Player "(?<victim>.+?)".*?pos=<(?<vx>[-+\d.]+), (?<vz>[-+\d.]+), (?<vy>[-+\d.]+)>\)? killed by Player "(?<attacker>.+?)".*?pos=<(?<ax>[-+\d.]+), (?<az>[-+\d.]+), (?<ay>[-+\d.]+)>\)? with (?<weapon>.+?) from (?<dist>[-+\d.]+) meters$/i;
 
-  const aiRe=/^(?<time>\d{2}:\d{2}:\d{2})\s*\|\s*Player\s+"(?<victim>.+?)"\s*\(DEAD\)\s*\(id=(?<vid>\d+)\s+pos=<\s*(?<vx>[-+\d.]+)\s*,\s*(?<vz>[-+\d.]+)\s*,\s*(?<vy>[-+\d.]+)\s*>\)\s*killed by\s*(?!Player\b)(?<ai>.+?)\s*$/i;
+  // AI kill (attacker is NOT a Player line)
+  const killReAI =
+    /^(?<time>\d{2}:\d{2}:\d{2}) \| Player "(?<victim>.+?)".*?pos=<(?<vx>[-+\d.]+), (?<vz>[-+\d.]+), (?<vy>[-+\d.]+)>\)? killed by (?<ai>.+)$/i;
 
-  const suicideRe=/^(?<time>\d{2}:\d{2}:\d{2})\s*\|\s*Player\s+"(?<victim>.+?)"\s*\(id=(?<vid>\d+)\s+pos=<\s*(?<vx>[-+\d.]+)\s*,\s*(?<vz>[-+\d.]+)\s*,\s*(?<vy>[-+\d.]+)\s*>\)\s*committed suicide\s*$/i;
+  // Suicide (with pos)
+  const suicideRe =
+    /^(?<time>\d{2}:\d{2}:\d{2}) \| Player "(?<victim>.+?)".*?pos=<(?<vx>[-+\d.]+), (?<vz>[-+\d.]+), (?<vy>[-+\d.]+)>\)? committed suicide$/i;
 
-  const timeToSec = t => { const [H,M,S]=t.split(':').map(n=>+n); return (H*3600+M*60+S)|0; };
-  const worldToImagePx = p => ({ xpx:(p.x/WORLD)*imgW, ypx:imgH-(p.z/WORLD)*imgH });
-
-  function darkerColor(hex){
-    const c=document.createElement("canvas").getContext("2d");
-    c.fillStyle=hex;c.fillRect(0,0,1,1);
-    const [r,g,b]=c.getImageData(0,0,1,1).data;
-    return `rgb(${r*0.6},${g*0.6},${b*0.6})`;
-  }
-
+  // Parsing
   function parseADM(text){
-    snapshots.clear(); orderedTimestamps=[]; killEvents=[]; aiDeaths=[]; suicides=[];
-    for(const raw of text.split(/\r?\n/)){
-      let m=raw.match(posRe);
-      if(m){
-        const {time,name,id,x,z,y}=m.groups;
-        if(!snapshots.has(time)){snapshots.set(time,[]);orderedTimestamps.push(time);}
+    snapshots.clear(); orderedTimestamps=[]; kills=[];
+    for (const raw of text.split(/\r?\n/)) {
+      let m;
+
+      m = raw.match(posRe);
+      if (m) {
+        const {time,name,id,x,z,y} = m.groups;
+        if (!snapshots.has(time)) { snapshots.set(time,[]); orderedTimestamps.push(time); }
         snapshots.get(time).push({name,id,x:+x,z:+z,y:+y});
         continue;
       }
-      m=raw.match(killRe);
-      if(m){
-        const g=m.groups;
-        killEvents.push({
-          time:g.time,
-          victimName:g.victim, killerName:g.killer,
-          weapon:g.weapon.trim(), distance:+g.dist,
-          victim:{x:+g.vx,z:+g.vz,y:+g.vy},
-          killer:{x:+g.kx,z:+g.kz,y:+g.ky}
+
+      m = raw.match(killRePVP);
+      if (m) {
+        const {time,victim,vx,vz,vy,attacker,ax,az,ay,weapon,dist} = m.groups;
+        kills.push({
+          type:'pvp', time,
+          victim, attacker, weapon, dist:+dist,
+          vx:+vx, vz:+vz, vy:+vy,
+          ax:+ax, az:+az, ay:+ay
         });
         continue;
       }
-      m=raw.match(aiRe);
-      if(m){
-        const g=m.groups;
-        aiDeaths.push({
-          time:g.time,
-          victimName:g.victim,
-          ai:g.ai.trim(),
-          victim:{x:+g.vx,z:+g.vz,y:+g.vy}
+
+      m = raw.match(killReAI);
+      if (m) {
+        const {time,victim,vx,vz,vy,ai} = m.groups;
+        kills.push({
+          type:'ai', time,
+          victim, ai,
+          vx:+vx, vz:+vz, vy:+vy
         });
         continue;
       }
-      m=raw.match(suicideRe);
-      if(m){
-        const g=m.groups;
-        suicides.push({
-          time:g.time,
-          victimName:g.victim,
-          victim:{x:+g.vx,z:+g.vz,y:+g.vy}
+
+      m = raw.match(suicideRe);
+      if (m) {
+        const {time,victim,vx,vz,vy} = m.groups;
+        kills.push({
+          type:'suicide', time,
+          victim,
+          vx:+vx, vz:+vz, vy:+vy
         });
         continue;
       }
@@ -204,323 +214,404 @@
 
   function populateTimestamps(){
     startTimeSel.innerHTML=''; endTimeSel.innerHTML='';
-    for(const t of orderedTimestamps){
-      const a=document.createElement('option'); a.value=t; a.textContent=t; startTimeSel.appendChild(a);
-      const b=document.createElement('option'); b.value=t; b.textContent=t; endTimeSel.appendChild(b);
+    for (const t of orderedTimestamps) {
+      const o1=document.createElement('option'); o1.value=t; o1.textContent=t; startTimeSel.appendChild(o1);
+      const o2=document.createElement('option'); o2.value=t; o2.textContent=t; endTimeSel.appendChild(o2);
     }
-    if(orderedTimestamps.length){
-      startTimeSel.value=orderedTimestamps[0];
-      endTimeSel.value=orderedTimestamps[0];
+    if (orderedTimestamps.length) {
+      startTimeSel.value = orderedTimestamps[0];
+      endTimeSel.value   = orderedTimestamps[0];
     }
+  }
+
+  function worldToImagePx(p){
+    return { xpx:(p.x/WORLD)*imgW, ypx:imgH-(p.z/WORLD)*imgH };
+  }
+
+  function darkerColor(hexOrRgb){
+    // supports #rrggbb or rgb(...)
+    const c = document.createElement('canvas'); const ctx = c.getContext('2d');
+    ctx.fillStyle = hexOrRgb; ctx.fillRect(0,0,1,1);
+    const [r,g,b] = ctx.getImageData(0,0,1,1).data;
+    return `rgb(${Math.floor(r*0.6)},${Math.floor(g*0.6)},${Math.floor(b*0.6)})`;
   }
 
   function gatherPlayersInRange(){
-    const a=timeToSec(startTimeSel.value||'00:00:00');
-    const b=timeToSec(endTimeSel.value||'00:00:00');
-    const lo=Math.min(a,b), hi=Math.max(a,b);
-    const map=new Map();
-    orderedTimestamps.forEach(t=>{
-      const ts=timeToSec(t);
-      if(ts>=lo && ts<=hi){
-        for(const p of (snapshots.get(t)||[])){
-          if(!map.has(p.name)) map.set(p.name,[]);
-          map.get(p.name).push({...p,time:t});
-        }
+    const a=orderedTimestamps.indexOf(startTimeSel.value);
+    const b=orderedTimestamps.indexOf(endTimeSel.value);
+    if (a<0 || b<0) return new Map();
+    const [i0,i1] = [Math.min(a,b), Math.max(a,b)];
+    const range = orderedTimestamps.slice(i0, i1+1);
+    const map = new Map();
+    for (const t of range) {
+      for (const p of snapshots.get(t) || []) {
+        if (!map.has(p.name)) map.set(p.name, []);
+        map.get(p.name).push({...p, time:t});
       }
-    });
+    }
     return map;
   }
 
-  function killsInRangeFiltered(){
-    const a=timeToSec(startTimeSel.value||'00:00:00');
-    const b=timeToSec(endTimeSel.value||'00:00:00');
-    const lo=Math.min(a,b), hi=Math.max(a,b);
-    return killEvents.filter(k=>{
-      const ts=timeToSec(k.time);
-      if(!(ts>=lo && ts<=hi)) return false;
-      return selectedPlayers.has(k.victimName) || selectedPlayers.has(k.killerName);
-    });
-  }
-  function aiInRangeFiltered(){
-    const a=timeToSec(startTimeSel.value||'00:00:00');
-    const b=timeToSec(endTimeSel.value||'00:00:00');
-    const lo=Math.min(a,b), hi=Math.max(a,b);
-    return aiDeaths.filter(k=>{
-      const ts=timeToSec(k.time);
-      if(!(ts>=lo && ts<=hi)) return false;
-      return selectedPlayers.has(k.victimName);
-    });
-  }
-  function suicidesInRangeFiltered(){
-    const a=timeToSec(startTimeSel.value||'00:00:00');
-    const b=timeToSec(endTimeSel.value||'00:00:00');
-    const lo=Math.min(a,b), hi=Math.max(a,b);
-    return suicides.filter(s=>{
-      const ts=timeToSec(s.time);
-      if(!(ts>=lo && ts<=hi)) return false;
-      return selectedPlayers.has(s.victimName);
-    });
-  }
-
   function ensureDefaults(names){
-    for(const n of names){
-      if(!playerColors.has(n)) playerColors.set(n,'#ff0000');
+    for (const n of names) {
+      if (!playerColors.has(n)) playerColors.set(n, '#ff0000');
       selectedPlayers.add(n);
     }
   }
 
   function populatePlayerListForRange(){
-    const paths=gatherPlayersInRange();
-    const names=[...paths.keys()].sort((a,b)=>a.localeCompare(b));
+    const paths = gatherPlayersInRange();
+    const names = [...paths.keys()].sort((a,b)=>a.localeCompare(b));
     ensureDefaults(names);
-    playerListDiv.innerHTML='';
-    for(const n of names){
-      const color=playerColors.get(n)||'#ff0000';
-      const label=document.createElement('label');
+    playerListDiv.innerHTML = '';
 
-      const cb=document.createElement('input');
-      cb.type='checkbox'; cb.checked=selectedPlayers.has(n);
-      cb.addEventListener('change',()=>{ cb.checked?selectedPlayers.add(n):selectedPlayers.delete(n); renderRange(); });
+    for (const n of names) {
+      const color = playerColors.get(n) || '#ff0000';
+      const label = document.createElement('label');
 
-      const colorInput=document.createElement('input');
-      colorInput.type='color'; colorInput.value=color; colorInput.className='colorInput';
-      colorInput.addEventListener('input',()=>{ playerColors.set(n,colorInput.value); renderRange(); });
+      const cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.checked = selectedPlayers.has(n);
+      cb.addEventListener('change',()=>{
+        if (cb.checked) selectedPlayers.add(n);
+        else selectedPlayers.delete(n);
+        renderRange();
+      });
 
-      label.appendChild(cb); label.appendChild(colorInput); label.appendChild(document.createTextNode(' '+n));
+      const colorInput = document.createElement('input');
+      colorInput.type = 'color';
+      colorInput.value = color;
+      colorInput.className = 'colorInput';
+      colorInput.addEventListener('input', ()=>{
+        playerColors.set(n, colorInput.value);
+        renderRange();
+      });
+
+      label.appendChild(cb);
+      label.appendChild(colorInput);
+      label.appendChild(document.createTextNode(' ' + n));
       playerListDiv.appendChild(label);
     }
   }
 
+  // ---------- Rendering ----------
   function renderRange(){
-    gTracks.innerHTML=''; gDots.innerHTML=''; gKills.innerHTML=''; gHighlights.innerHTML='';
+    gTracks.innerHTML = '';
+    gDots.innerHTML   = '';
+    gKills.innerHTML  = '';
     tooltip.style.display='none';
 
-    const paths=gatherPlayersInRange();
+    // scaling factors
+    const raw = fitScale/scale;
+    const dotFactor  = Math.min(dotMax,  Math.max(dotMin,  raw));
+    const lineFactor = Math.min(lineMax, Math.max(lineMin, raw));
 
-    const raw=fitScale/scale;
-    const dotFactor=Math.min(dotMax,Math.max(dotMin,raw));
-    const lineFactor=Math.min(lineMax,Math.max(lineMin,raw));
-    const dotSize=baseDotSize*dotFactor;
-    const strokeW=baseStroke*dotFactor;
-    const lineW=baseLine*lineFactor;
+    const dotSize = baseDotSize * dotFactor;
+    const strokeW = baseStroke  * dotFactor;
+    const lineW   = baseLine    * lineFactor;
 
-    // Tracks & dots
-    paths.forEach((positions,name)=>{
-      if(!selectedPlayers.has(name))return;
-      const color=playerColors.get(name)||'#ff0000';
-      const lineColor=darkerColor(color);
-      positions.sort((a,b)=>timeToSec(a.time)-timeToSec(b.time));
+    // Draw paths & dots
+    const paths = gatherPlayersInRange();
+    paths.forEach((positions, name)=>{
+      if (!selectedPlayers.has(name)) return;
+      positions.sort((a,b)=>orderedTimestamps.indexOf(a.time)-orderedTimestamps.indexOf(b.time));
+      const color = playerColors.get(name) || '#ff0000';
+      const lineColor = darkerColor(color);
 
-      if(positions.length>1){
-        for(let i=1;i<positions.length;i++){
-          const p0=worldToImagePx(positions[i-1]);
-          const p1=worldToImagePx(positions[i]);
-          const dx=p1.xpx-p0.xpx,dy=p1.ypx-p0.ypx,len=Math.hypot(dx,dy)||1;
-          const offset=dotSize+2;const ox=(dx/len)*offset,oy=(dy/len)*offset;
-          const line=document.createElementNS('http://www.w3.org/2000/svg','line');
-          line.setAttribute('x1',p0.xpx+ox); line.setAttribute('y1',p0.ypx+oy);
-          line.setAttribute('x2',p1.xpx-ox); line.setAttribute('y2',p1.ypx-oy);
-          line.setAttribute('stroke-width',lineW);
-          line.setAttribute('class','track'); line.setAttribute('stroke',lineColor);
+      // Lines with slight offset from dot edges
+      if (positions.length > 1) {
+        for (let i=1;i<positions.length;i++){
+          const p0 = worldToImagePx(positions[i-1]);
+          const p1 = worldToImagePx(positions[i]);
+          const dx = p1.xpx - p0.xpx, dy = p1.ypx - p0.ypx, len = Math.hypot(dx,dy) || 1;
+          const offset = dotSize + 2;
+          const ox = (dx/len)*offset, oy=(dy/len)*offset;
+
+          const line = document.createElementNS('http://www.w3.org/2000/svg','line');
+          line.setAttribute('x1', p0.xpx+ox); line.setAttribute('y1', p0.ypx+oy);
+          line.setAttribute('x2', p1.xpx-ox); line.setAttribute('y2', p1.ypx-oy);
+          line.setAttribute('class','track');
+          line.setAttribute('stroke', lineColor);
+          line.setAttribute('stroke-width', lineW);
           line.setAttribute('marker-end','url(#arrowhead)');
           gTracks.appendChild(line);
         }
       }
 
-      for(const pos of positions){
-        const {xpx,ypx}=worldToImagePx(pos);
-        const c=document.createElementNS('http://www.w3.org/2000/svg','circle');
-        c.setAttribute('cx',xpx); c.setAttribute('cy',ypx);
-        c.setAttribute('r',dotSize);
-        c.setAttribute('stroke-width',strokeW);
-        c.setAttribute('class','poi'); c.setAttribute('fill',color);
-        c.setAttribute('stroke','#fff');
+      // Dots
+      for (const pos of positions) {
+        const {xpx, ypx} = worldToImagePx(pos);
+        const c = document.createElementNS('http://www.w3.org/2000/svg','circle');
+        c.setAttribute('cx', xpx); c.setAttribute('cy', ypx);
+        c.setAttribute('r', dotSize);
+        c.setAttribute('fill', color);
+        c.setAttribute('stroke', '#fff');
+        c.setAttribute('stroke-width', strokeW);
+        c.setAttribute('class','poi');
 
-        c.addEventListener('mouseenter',()=>{
+        c.addEventListener('mouseenter', ()=>{
           c.classList.add('hovered');
           tooltip.style.display='block';
-          tooltip.textContent=`${name}\n${pos.time}\nX:${pos.x.toFixed(1)} Z:${pos.z.toFixed(1)} Y:${pos.y.toFixed(1)}`;
+          tooltip.textContent = `${name}\n${pos.time}\nX:${pos.x.toFixed(1)} Z:${pos.z.toFixed(1)} Y:${pos.y.toFixed(1)}`;
         });
-        c.addEventListener('mousemove',(e)=>{ tooltip.style.left=(e.pageX+12)+'px'; tooltip.style.top=(e.pageY+12)+'px'; });
-        c.addEventListener('mouseleave',()=>{ c.classList.remove('hovered'); tooltip.style.display='none'; });
+        c.addEventListener('mousemove', (e)=>{
+          tooltip.style.left=(e.pageX+12)+'px';
+          tooltip.style.top =(e.pageY+12)+'px';
+        });
+        c.addEventListener('mouseleave', ()=>{
+          c.classList.remove('hovered');
+          tooltip.style.display='none';
+        });
 
         gDots.appendChild(c);
       }
     });
 
-    if(killToggle.checked){
-      // PvP kills (clickable => role markers)
-      for(const k of killsInRangeFiltered()){
-        const vicPx=worldToImagePx(k.victim);
-        const color=playerColors.get(k.victimName)||'#ff0000';
-        drawKillX(vicPx.xpx, vicPx.ypx, dotSize, strokeW, color, '#fff',
-          `${k.victimName} killed by ${k.killerName}\nwith ${k.weapon} from ${k.distance.toFixed(2)} meters`,
-          () => {
-            gHighlights.innerHTML='';
-            drawRoleMarker('victim', vicPx.xpx, vicPx.ypx, dotSize, playerColors.get(k.victimName)||'#ff0000', `${k.victimName} (Victim)`, strokeW);
-            const killerPx=worldToImagePx(k.killer);
-            drawRoleMarker('attacker', killerPx.xpx, killerPx.ypx, dotSize, playerColors.get(k.killerName)||'#ff0000', `${k.killerName} (Attacker)`, strokeW);
-          }
-        );
-      }
-
-      // AI kills (non-clickable)
-      for(const k of aiInRangeFiltered()){
-        const vicPx=worldToImagePx(k.victim);
-        const color=playerColors.get(k.victimName)||'#ff0000';
-        drawKillX(vicPx.xpx, vicPx.ypx, dotSize, strokeW, color, '#fff',
-          `${k.victimName} killed by AI ${k.ai}`, null
-        );
-      }
-
-      // Suicides (non-clickable)
-      for(const s of suicidesInRangeFiltered()){
-        const px=worldToImagePx(s.victim);
-        const color=playerColors.get(s.victimName)||'#ff0000';
-        drawKillX(px.xpx, px.ypx, dotSize, strokeW, color, '#fff',
-          `${s.victimName} committed suicide`, null
-        );
-      }
-    }
-
+    // Kill logs
+    renderKills(dotSize, strokeW, lineW);
     applyTransform();
   }
 
-  // Draw a pulsing, bolder "X" marker
-  function drawKillX(cx, cy, r, strokeW, color, outline, hoverText, onClick){
-    const arm=r*1.1;
-    const x1=cx-arm, y1=cy-arm, x2=cx+arm, y2=cy+arm;
-    const x3=cx-arm, y3=cy+arm, x4=cx+arm, y4=cy-arm;
+  function renderKills(dotSize, strokeW, lineW){
+    if (!killLogsChk.checked) return;
 
-    // bolder multipliers
-    const innerW = strokeW * 1.35;
-    const outerW = strokeW * 2.2;
+    const a=orderedTimestamps.indexOf(startTimeSel.value);
+    const b=orderedTimestamps.indexOf(endTimeSel.value);
+    if (a<0 || b<0) return;
+    const [i0,i1] = [Math.min(a,b), Math.max(a,b)];
+    const range = new Set(orderedTimestamps.slice(i0, i1+1));
 
-    const l1=document.createElementNS('http://www.w3.org/2000/svg','line');
-    l1.setAttribute('x1',x1); l1.setAttribute('y1',y1);
-    l1.setAttribute('x2',x2); l1.setAttribute('y2',y2);
-    l1.setAttribute('stroke',color); l1.setAttribute('stroke-width',innerW); l1.setAttribute('stroke-linecap','round');
+    for (const k of kills) {
+      if (!range.has(k.time)) continue;
 
-    const l2=document.createElementNS('http://www.w3.org/2000/svg','line');
-    l2.setAttribute('x1',x3); l2.setAttribute('y1',y3);
-    l2.setAttribute('x2',x4); l2.setAttribute('y2',y4);
-    l2.setAttribute('stroke',color); l2.setAttribute('stroke-width',innerW); l2.setAttribute('stroke-linecap','round');
+      // Filter by selected players
+      let involvesSelected = false;
+      if (k.type === 'pvp') {
+        involvesSelected = selectedPlayers.has(k.victim) || selectedPlayers.has(k.attacker);
+      } else if (k.type === 'ai' || k.type === 'suicide') {
+        involvesSelected = selectedPlayers.has(k.victim);
+      }
+      if (!involvesSelected) continue;
 
-    const ol1=l1.cloneNode(true); ol1.setAttribute('stroke',outline); ol1.setAttribute('stroke-width',outerW);
-    const ol2=l2.cloneNode(true); ol2.setAttribute('stroke',outline); ol2.setAttribute('stroke-width',outerW);
+      // Choose color (victim’s color as base)
+      const vColor = playerColors.get(k.victim) || '#ff0000';
 
-    const g=document.createElementNS('http://www.w3.org/2000/svg','g');
-    g.setAttribute('class','kill-x');
-    g.appendChild(ol1); g.appendChild(ol2); g.appendChild(l1); g.appendChild(l2);
+      // Position for X (victim location)
+      const {xpx, ypx} = worldToImagePx({x:k.vx, z:k.vz});
 
-    g.addEventListener('mouseenter',()=>{ tooltip.style.display='block'; tooltip.textContent=hoverText; });
-    g.addEventListener('mousemove',(e)=>{ tooltip.style.left=(e.pageX+12)+'px'; tooltip.style.top=(e.pageY+12)+'px'; });
-    g.addEventListener('mouseleave',()=>{ tooltip.style.display='none'; });
-    if(onClick){ g.addEventListener('click', onClick); }
+      // Arm half-length for X and pulse radius based on dot scaling
+      const half = Math.max(10, dotSize * 0.8);
+      const haloRadius = Math.max(half*2.0, dotSize*2.2);
 
-    gKills.appendChild(g);
-  }
+      const group = document.createElementNS('http://www.w3.org/2000/svg','g');
+      group.classList.add('pulsing'); // default pulsing
 
-  // Role marker at (cx,cy): diamond (victim) or triangle (attacker)
-  function drawRoleMarker(role, cx, cy, r, color, label, strokeW){
-    const grp=document.createElementNS('http://www.w3.org/2000/svg','g');
+      // X lines (static, no transform jitter)
+      const l1 = document.createElementNS('http://www.w3.org/2000/svg','line');
+      l1.setAttribute('x1', xpx - half); l1.setAttribute('y1', ypx - half);
+      l1.setAttribute('x2', xpx + half); l1.setAttribute('y2', ypx + half);
+      l1.setAttribute('class','killX'); l1.setAttribute('stroke', vColor);
+      l1.setAttribute('stroke-width', Math.max(2.5, strokeW*0.9));
 
-    if(role==='victim'){
-      const pts = [
-        [cx, cy - r],
-        [cx + r, cy],
-        [cx, cy + r],
-        [cx - r, cy]
-      ].map(p=>p.join(',')).join(' ');
-      const poly=document.createElementNS('http://www.w3.org/2000/svg','polygon');
-      poly.setAttribute('points', pts);
-      poly.setAttribute('fill', color);
-      poly.setAttribute('stroke', '#fff');
-      poly.setAttribute('stroke-width', strokeW);
-      grp.appendChild(poly);
-    } else {
-      const a = r;
-      const h = a * Math.sqrt(3);
-      const pTop = [cx, cy - a];
-      const pBR  = [cx + (h/2)*0.577, cy + a*0.9];
-      const pBL  = [cx - (h/2)*0.577, cy + a*0.9];
-      const pts = [pTop,pBR,pBL].map(p=>p.join(',')).join(' ');
-      const tri=document.createElementNS('http://www.w3.org/2000/svg','polygon');
-      tri.setAttribute('points', pts);
-      tri.setAttribute('fill', color);
-      tri.setAttribute('stroke', '#fff');
-      tri.setAttribute('stroke-width', strokeW);
-      grp.appendChild(tri);
+      const l2 = document.createElementNS('http://www.w3.org/2000/svg','line');
+      l2.setAttribute('x1', xpx - half); l2.setAttribute('y1', ypx + half);
+      l2.setAttribute('x2', xpx + half); l2.setAttribute('y2', ypx - half);
+      l2.setAttribute('class','killX'); l2.setAttribute('stroke', vColor);
+      l2.setAttribute('stroke-width', Math.max(2.5, strokeW*0.9));
+
+      // Pulse halo as a stroked circle (no position jitter)
+      const halo = document.createElementNS('http://www.w3.org/2000/svg','circle');
+      halo.setAttribute('cx', xpx); halo.setAttribute('cy', ypx);
+      halo.setAttribute('r', haloRadius);
+      halo.setAttribute('class','killPulse');
+      halo.setAttribute('stroke', vColor);
+      halo.setAttribute('stroke-width', Math.max(1.5, lineW*0.8));
+
+      group.appendChild(halo);
+      group.appendChild(l1);
+      group.appendChild(l2);
+
+      // Tooltip text
+      let tip = '';
+      if (k.type === 'pvp') {
+        tip = `${k.victim} killed by ${k.attacker}\n${k.weapon} • ${k.dist.toFixed(1)} m`;
+      } else if (k.type === 'ai') {
+        tip = `${k.victim} killed by AI ${k.ai}`;
+      } else {
+        tip = `${k.victim} committed suicide`;
+      }
+
+      group.addEventListener('mouseenter', ()=>{
+        tooltip.style.display='block';
+        tooltip.textContent = tip;
+      });
+      group.addEventListener('mousemove', (e)=>{
+        tooltip.style.left = (e.pageX+12)+'px';
+        tooltip.style.top  = (e.pageY+12)+'px';
+      });
+      group.addEventListener('mouseleave', ()=>{
+        tooltip.style.display='none';
+      });
+
+      // Click to toggle pulse & show victim/attacker markers (only for PVP)
+      if (k.type === 'pvp') {
+        group.style.cursor = 'pointer';
+        group.addEventListener('click', ()=>{
+          if (group.classList.contains('pulsing')) {
+            group.classList.remove('pulsing'); // stop pulsing when clicked
+          } else {
+            group.classList.add('pulsing'); // click again to resume
+          }
+
+          // Remove any existing detail markers on this group
+          const old = group.querySelectorAll('.killDetail');
+          old.forEach(el=>el.remove());
+
+          // Add victim diamond and attacker triangle at their positions
+          const vPos = worldToImagePx({x:k.vx, z:k.vz});
+          const aPos = worldToImagePx({x:k.ax, z:k.az});
+          const vC = vColor;
+          const aC = playerColors.get(k.attacker) || darkerColor(vColor);
+
+          // sizes match current dots
+          const r = dotSize;
+          const sw = strokeW;
+
+          // Diamond (victim)
+          const d = document.createElementNS('http://www.w3.org/2000/svg','polygon');
+          const diamondPts = [
+            [vPos.xpx, vPos.ypx - r],
+            [vPos.xpx + r, vPos.ypx],
+            [vPos.xpx, vPos.ypx + r],
+            [vPos.xpx - r, vPos.ypx]
+          ].map(p=>p.join(',')).join(' ');
+          d.setAttribute('points', diamondPts);
+          d.setAttribute('fill', vC);
+          d.setAttribute('stroke', '#fff');
+          d.setAttribute('stroke-width', sw);
+          d.setAttribute('class','killDetail');
+          d.addEventListener('mouseenter', ()=>{
+            tooltip.style.display='block';
+            tooltip.textContent = `${k.victim} (Victim)`;
+          });
+          d.addEventListener('mousemove', (e)=>{
+            tooltip.style.left=(e.pageX+12)+'px';
+            tooltip.style.top =(e.pageY+12)+'px';
+          });
+          d.addEventListener('mouseleave', ()=>tooltip.style.display='none');
+
+          // Triangle (attacker)
+          const t = document.createElementNS('http://www.w3.org/2000/svg','polygon');
+          const triPts = [
+            [aPos.xpx, aPos.ypx - r],
+            [aPos.xpx + r*0.866, aPos.ypx + r*0.5],
+            [aPos.xpx - r*0.866, aPos.ypx + r*0.5]
+          ].map(p=>p.join(',')).join(' ');
+          t.setAttribute('points', triPts);
+          t.setAttribute('fill', aC);
+          t.setAttribute('stroke', '#fff');
+          t.setAttribute('stroke-width', sw);
+          t.setAttribute('class','killDetail');
+          t.addEventListener('mouseenter', ()=>{
+            tooltip.style.display='block';
+            tooltip.textContent = `${k.attacker} (Attacker)`;
+          });
+          t.addEventListener('mousemove', (e)=>{
+            tooltip.style.left=(e.pageX+12)+'px';
+            tooltip.style.top =(e.pageY+12)+'px';
+          });
+          t.addEventListener('mouseleave', ()=>tooltip.style.display='none');
+
+          group.appendChild(d);
+          group.appendChild(t);
+        });
+      }
+
+      gKills.appendChild(group);
     }
-
-    grp.addEventListener('mouseenter',()=>{ tooltip.style.display='block'; tooltip.textContent=label; });
-    grp.addEventListener('mousemove',(e)=>{ tooltip.style.left=(e.pageX+12)+'px'; tooltip.style.top=(e.pageY+12)+'px'; });
-    grp.addEventListener('mouseleave',()=>{ tooltip.style.display='none'; });
-
-    gHighlights.appendChild(grp);
   }
 
+  // ---------- Pan / Zoom ----------
   function clampPan(){
-    const vw=viewport.clientWidth,vh=viewport.clientHeight;
-    const w=imgW*scale,h=imgH*scale;
-    if(w<=vw)tx=(vw-w)/2;else{const minTx=vw-w,maxTx=0;tx=Math.min(maxTx,Math.max(minTx,tx));}
-    if(h<=vh)ty=(vh-h)/2;else{const minTy=vh-h,maxTy=0;ty=Math.min(maxTy,Math.max(minTy,ty));}
+    const vw=viewport.clientWidth, vh=viewport.clientHeight;
+    const w=imgW*scale, h=imgH*scale;
+    if (w<=vw) tx=(vw-w)/2; else { const minTx=vw-w, maxTx=0; tx=Math.min(maxTx, Math.max(minTx, tx)); }
+    if (h<=vh) ty=(vh-h)/2; else { const minTy=vh-h, maxTy=0; ty=Math.min(maxTy, Math.max(minTy, ty)); }
   }
-  function applyTransform(){clampPan();stage.style.transform=`translate(${tx}px,${ty}px) scale(${scale})`;}
+  function applyTransform(){ clampPan(); stage.style.transform=`translate(${tx}px, ${ty}px) scale(${scale})`; }
   function fitToViewport(){
-    if(!imgW||!imgH)return;
-    const vw=viewport.clientWidth,vh=viewport.clientHeight;
-    scale=Math.min(vw/imgW,vh/imgH);
-    fitScale=scale; MIN_SCALE=fitScale;
+    if (!imgW || !imgH) return;
+    const vw=viewport.clientWidth, vh=viewport.clientHeight;
+    scale = Math.min(vw/imgW, vh/imgH);
+    fitScale = scale;
+    MIN_SCALE = fitScale; // don’t allow zooming out past fit
     tx=(vw-imgW*scale)/2; ty=(vh-imgH*scale)/2;
     applyTransform();
   }
   function zoomAt(cx,cy,f){
-    const old=scale; let next=Math.max(MIN_SCALE,Math.min(MAX_SCALE,scale*f));
-    const k=next/old; const sx=(cx-tx), sy=(cy-ty); tx=cx-sx*k; ty=cy-sy*k; scale=next;
-    renderRange(); applyTransform();
+    const old=scale; let next=Math.max(MIN_SCALE, Math.min(MAX_SCALE, scale*f));
+    const k = next/old; const sx=(cx - tx), sy=(cy - ty);
+    tx = cx - sx*k; ty = cy - sy*k; scale = next;
+    renderRange(); // recompute visual sizes
+    applyTransform();
   }
 
-  viewport.addEventListener('wheel',e=>{
-    e.preventDefault(); const rect=viewport.getBoundingClientRect();
-    zoomAt(e.clientX-rect.left,e.clientY-rect.top,(e.deltaY<0)?1.15:1/1.15);
-  },{passive:false});
-  let dragging=false,lx=0,ly=0;
-  viewport.addEventListener('mousedown',e=>{dragging=true;lx=e.clientX;ly=e.clientY;});
-  window.addEventListener('mouseup',()=>dragging=false);
-  window.addEventListener('mousemove',e=>{
-    if(!dragging)return; tx+=(e.clientX-lx); ty+=(e.clientY-ly); lx=e.clientX; ly=e.clientY; applyTransform();
+  viewport.addEventListener('wheel', (e)=>{
+    e.preventDefault();
+    const rect=viewport.getBoundingClientRect();
+    zoomAt(e.clientX-rect.left, e.clientY-rect.top, (e.deltaY<0)?1.15:1/1.15);
+  }, {passive:false});
+  let dragging=false, lx=0, ly=0;
+  viewport.addEventListener('mousedown', (e)=>{ dragging=true; lx=e.clientX; ly=e.clientY; });
+  window.addEventListener('mouseup', ()=> dragging=false);
+  window.addEventListener('mousemove', (e)=>{
+    if (!dragging) return;
+    tx += (e.clientX - lx); ty += (e.clientY - ly);
+    lx = e.clientX; ly = e.clientY;
+    applyTransform();
   });
 
-  fitBtn.addEventListener('click',fitToViewport);
-  startTimeSel.addEventListener('change',()=>{populatePlayerListForRange();renderRange();});
-  endTimeSel.addEventListener('change',()=>{populatePlayerListForRange();renderRange();});
-  killToggle.addEventListener('change',()=>{renderRange();});
+  // ---------- Events ----------
+  fitBtn.addEventListener('click', fitToViewport);
+  startTimeSel.addEventListener('change', ()=>{ populatePlayerListForRange(); renderRange(); });
+  endTimeSel  .addEventListener('change', ()=>{ populatePlayerListForRange(); renderRange(); });
+  killLogsChk  .addEventListener('change', ()=>{ renderRange(); });
 
-  selectAllBtn.addEventListener('click',()=>{
-    const paths=gatherPlayersInRange(); selectedPlayers=new Set(paths.keys());
-    playerListDiv.querySelectorAll('input[type=checkbox]').forEach(cb=>cb.checked=true);
-    [...paths.keys()].forEach(n=>playerColors.set(n,'#ff0000'));
+  selectAllBtn.addEventListener('click', ()=>{
+    const paths = gatherPlayersInRange();
+    selectedPlayers = new Set(paths.keys());
+    playerListDiv.querySelectorAll('input[type=checkbox]').forEach(cb => cb.checked = true);
+    [...paths.keys()].forEach(n => playerColors.set(n, '#ff0000'));
     renderRange();
   });
-  clearAllBtn.addEventListener('click',()=>{
+  clearAllBtn.addEventListener('click', ()=>{
     selectedPlayers.clear();
-    playerListDiv.querySelectorAll('input[type=checkbox]').forEach(cb=>cb.checked=false);
+    playerListDiv.querySelectorAll('input[type=checkbox]').forEach(cb => cb.checked = false);
     renderRange();
   });
 
-  fileInput.addEventListener('change',e=>{
-    const f=e.target.files?.[0]; if(!f)return;
-    const reader=new FileReader();
-    reader.onload=()=>{parseADM(String(reader.result||'')); populateTimestamps(); populatePlayerListForRange(); fitToViewport(); renderRange();};
+  fileInput.addEventListener('change', e=>{
+    const f=e.target.files?.[0]; if (!f) return;
+    const reader = new FileReader();
+    reader.onload = ()=>{
+      parseADM(String(reader.result||''));
+      populateTimestamps();
+      populatePlayerListForRange();
+      fitToViewport();
+      renderRange();
+    };
     reader.readAsText(f);
   });
-  mapImg.addEventListener('load',()=>{
-    imgW=mapImg.naturalWidth; imgH=mapImg.naturalHeight;
-    overlay.setAttribute('viewBox',`0 0 ${imgW} ${imgH}`);
-    overlay.setAttribute('width',imgW); overlay.setAttribute('height',imgH);
-    stage.style.width=imgW+'px'; stage.style.height=imgH+'px';
-    fitToViewport(); renderRange();
+
+  mapImg.addEventListener('load', ()=>{
+    imgW = mapImg.naturalWidth; imgH = mapImg.naturalHeight;
+    overlay.setAttribute('viewBox', `0 0 ${imgW} ${imgH}`);
+    overlay.setAttribute('width', imgW);
+    overlay.setAttribute('height', imgH);
+    stage.style.width = imgW + 'px';
+    stage.style.height = imgH + 'px';
+    fitToViewport();
+    renderRange();
   });
 })();
 </script>
