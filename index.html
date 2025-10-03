@@ -142,11 +142,13 @@
   // Suicide
   const suicideRe=/^(?<time>\d{2}:\d{2}:\d{2})\s*\|\s*Player\s+"(?<victim>.+?)"\s*\(id=(?<vid>\d+)\s+pos=<\s*(?<vx>[-+\d.]+)\s*,\s*(?<vz>[-+\d.]+)\s*,\s*(?<vy>[-+\d.]+)\s*>\)\s*committed suicide\s*$/i;
 
-  // PvP damage
-  const dmgPvpRe=/^(?<time>\d{2}:\d{2}:\d{2})\s*\|\s*Player\s+"(?<victim>.+?)"\s*\(id=(?<vid>\d+)\s+pos=<\s*(?<vx>[-+\d.]+)\s*,\s*(?<vz>[-+\d.]+)\s*,\s*(?<vy>[-+\d.]+)\s*>\)\s*\[HP:\s*(?<hp>[-+\d.]+)\]\s*hit by\s*Player\s+"(?<attacker>.+?)"\s*\(id=(?<aid>\d+)\s+pos=<\s*(?<ax>[-+\d.]+)\s*,\s*(?<az>[-+\d.]+)\s*,\s*(?<ay>[-+\d.]+)\s*>\)\s*into\s*(?<part>[A-Za-z]+)\(\d+\)\s*for\s*(?<dmg>[-+\d.]+)\s*damage\s*\((?<attack>[^)]+)\)\s*with\s*(?<weapon>.+?)\s*$/i;
+  // PvP damage — optional (DEAD), optional [HP: ...], optional distance
+  const dmgPvpRe =
+  /^(?<time>\d{2}:\d{2}:\d{2})\s*\|\s*Player\s+"(?<victim>.+?)"\s*(?:\(DEAD\)\s*)?\(id=(?<vid>\d+)\s+pos=<\s*(?<vx>[-+\d.]+)\s*,\s*(?<vz>[-+\d.]+)\s*,\s*(?<vy>[-+\d.]+)\s*>\)\s*(?:\[\s*HP:\s*(?<hp>[-+\d.]+)\s*\]\s*)?hit by\s*Player\s+"(?<attacker>.+?)"\s*\(id=(?<aid>\d+)\s+pos=<\s*(?<ax>[-+\d.]+)\s*,\s*(?<az>[-+\d.]+)\s*,\s*(?<ay>[-+\d.]+)\s*>\)\s*into\s*(?<part>[A-Za-z]+)\(\d+\)\s*for\s*(?<dmg>[-+\d.]+)\s*damage\s*\((?<attack>[^)]+)\)\s*with\s*(?<weapon>.+?)(?:\s*from\s*(?<dist>[-+\d.]+)\s*meters)?\s*$/i;
 
-  // AI/animal → player damage
-  const dmgAiRe=/^(?<time>\d{2}:\d{2}:\d{2})\s*\|\s*Player\s+"(?<victim>.+?)"\s*\(id=(?<vid>\d+)\s+pos=<\s*(?<vx>[-+\d.]+)\s*,\s*(?<vz>[-+\d.]+)\s*,\s*(?<vy>[-+\d.]+)\s*>\)\s*\[HP:\s*(?<hp>[-+\d.]+)\]\s*hit by\s*(?<ai>.+?)\s*into\s*(?<part>[A-Za-z]+)\(\d+\)\s*for\s*(?<dmg>[-+\d.]+)\s*damage\s*\((?<attack>[^)]+)\)\s*$/i;
+  // AI/animal → player damage — optional [HP: ...], optional distance
+  const dmgAiRe =
+  /^(?<time>\d{2}:\d{2}:\d{2})\s*\|\s*Player\s+"(?<victim>.+?)"\s*\(id=(?<vid>\d+)\s+pos=<\s*(?<vx>[-+\d.]+)\s*,\s*(?<vz>[-+\d.]+)\s*,\s*(?<vy>[-+\d.]+)\s*>\)\s*(?:\[\s*HP:\s*(?<hp>[-+\d.]+)\s*\]\s*)?hit by\s*(?<ai>.+?)\s*into\s*(?<part>[A-Za-z]+)\(\d+\)\s*for\s*(?<dmg>[-+\d.]+)\s*damage\s*\((?<attack>[^)]+)\)(?:\s*from\s*(?<dist>[-+\d.]+)\s*meters)?\s*$/i;
 
   const timeToSec = t => { const [H,M,S]=t.split(':').map(n=>+n); return (H*3600+M*60+S)|0; };
   const worldToImagePx = p => ({ xpx:(p.x/WORLD)*imgW, ypx:imgH-(p.z/WORLD)*imgH });
@@ -209,8 +211,10 @@
           time:g.time,
           victimName:g.victim,
           attackerName:g.attacker,
-          hp:+g.hp, part:g.part, damage:+g.dmg,
+          hp:(g.hp!==undefined && g.hp!==null)? +g.hp : null,
+          part:g.part, damage:+g.dmg,
           attack:g.attack.trim(), weapon:g.weapon.trim(),
+          distance:(g.dist!==undefined && g.dist!==null)? +g.dist : null,
           victim:{x:+g.vx,z:+g.vz,y:+g.vy},
           attacker:{x:+g.ax,z:+g.az,y:+g.ay}
         });
@@ -223,8 +227,10 @@
         dmgAiEvents.push({
           time:g.time,
           victimName:g.victim,
-          hp:+g.hp, part:g.part, damage:+g.dmg,
+          hp:(g.hp!==undefined && g.hp!==null)? +g.hp : null,
+          part:g.part, damage:+g.dmg,
           attack:g.attack.trim(), ai:g.ai.trim(),
+          distance:(g.dist!==undefined && g.dist!==null)? +g.dist : null,
           victim:{x:+g.vx,z:+g.vz,y:+g.vy}
         });
         continue;
@@ -412,9 +418,9 @@
           `${k.victimName} killed by ${k.killerName}\nwith ${k.weapon} from ${k.distance.toFixed(2)} meters\n${k.time}`,
           () => {
             gHighlights.innerHTML='';
-            drawRoleMarker('victim', vicPx.xpx, vicPx.ypx, dotSize, playerColors.get(k.victimName)||'#ff0000', `${k.victimName} (Victim)`, strokeW);
+            drawRoleMarker('victim',  vicPx.xpx, vicPx.ypx, dotSize, playerColors.get(k.victimName)||'#ff0000',  k.victimName,  k.victim,  strokeW);
             const killerPx=worldToImagePx(k.killer);
-            drawRoleMarker('attacker', killerPx.xpx, killerPx.ypx, dotSize, playerColors.get(k.killerName)||'#ff0000', `${k.killerName} (Attacker)`, strokeW);
+            drawRoleMarker('attacker',killerPx.xpx, killerPx.ypx, dotSize, playerColors.get(k.killerName)||'#ff0000', k.killerName, k.killer, strokeW);
           }
         );
       }
@@ -443,14 +449,16 @@
       for(const ev of damagePvpInRangeFiltered()){
         const vicPx=worldToImagePx(ev.victim);
         const color=playerColors.get(ev.victimName)||'#ff0000';
+        const hpText = (ev.hp ?? ev.hp === 0) ? `\nHP: ${ev.hp.toFixed(2)}` : '';
+        const distText = (ev.distance ?? ev.distance === 0) ? `\nDist: ${ev.distance.toFixed(2)} m` : '';
         drawBurst(
           vicPx.xpx, vicPx.ypx, dotSize, strokeW, color, '#000',
-          `${ev.victimName} hit by ${ev.attackerName}\n${ev.part} for ${ev.damage} dmg\n${ev.attack} with ${ev.weapon}\nHP: ${ev.hp.toFixed(2)}\n${ev.time}`,
+          `${ev.victimName} hit by ${ev.attackerName}\n${ev.part} for ${ev.damage} dmg\n${ev.attack} with ${ev.weapon}${distText}${hpText}\n${ev.time}`,
           () => {
             gHighlights.innerHTML='';
-            drawRoleMarker('victim', vicPx.xpx, vicPx.ypx, dotSize, playerColors.get(ev.victimName)||'#ff0000', `${ev.victimName} (Victim)`, strokeW);
+            drawRoleMarker('victim',  vicPx.xpx, vicPx.ypx, dotSize, playerColors.get(ev.victimName)||'#ff0000',  ev.victimName,  ev.victim,  strokeW);
             const atkPx=worldToImagePx(ev.attacker);
-            drawRoleMarker('attacker', atkPx.xpx, atkPx.ypx, dotSize, playerColors.get(ev.attackerName)||'#ff0000', `${ev.attackerName} (Attacker)`, strokeW);
+            drawRoleMarker('attacker',atkPx.xpx, atkPx.ypx, dotSize, playerColors.get(ev.attackerName)||'#ff0000', ev.attackerName, ev.attacker, strokeW);
           }
         );
       }
@@ -458,9 +466,11 @@
       for(const ev of damageAiInRangeFiltered()){
         const vicPx=worldToImagePx(ev.victim);
         const color=playerColors.get(ev.victimName)||'#ff0000';
+        const hpText = (ev.hp ?? ev.hp === 0) ? `\nHP: ${ev.hp.toFixed(2)}` : '';
+        const distText = (ev.distance ?? ev.distance === 0) ? `\nDist: ${ev.distance.toFixed(2)} m` : '';
         drawBurst(
           vicPx.xpx, vicPx.ypx, dotSize, strokeW, color, '#000',
-          `${ev.victimName} hit by ${ev.ai}\n${ev.part} for ${ev.damage} dmg\n${ev.attack}\nHP: ${ev.hp.toFixed(2)}\n${ev.time}`,
+          `${ev.victimName} hit by ${ev.ai}\n${ev.part} for ${ev.damage} dmg\n${ev.attack}${distText}${hpText}\n${ev.time}`,
           null
         );
       }
@@ -499,9 +509,10 @@
     gKills.appendChild(g);
   }
 
-  // Role marker at (cx,cy): diamond (victim) or triangle (attacker)
-  function drawRoleMarker(role, cx, cy, r, color, label, strokeW){
+  // Role marker at (cx,cy): diamond (victim) or triangle (attacker), tooltip shows position
+  function drawRoleMarker(role, cx, cy, r, color, name, pos, strokeW){
     const grp=document.createElementNS('http://www.w3.org/2000/svg','g');
+    const labelText = `${name} (${role==='victim'?'Victim':'Attacker'})\nX:${pos.x.toFixed(1)} Z:${pos.z.toFixed(1)} Y:${pos.y.toFixed(1)}`;
 
     if(role==='victim'){
       const pts = [
@@ -531,7 +542,7 @@
       grp.appendChild(tri);
     }
 
-    grp.addEventListener('mouseenter',()=>{ tooltip.style.display='block'; tooltip.textContent=label; });
+    grp.addEventListener('mouseenter',()=>{ tooltip.style.display='block'; tooltip.textContent=labelText; });
     grp.addEventListener('mousemove',(e)=>{ tooltip.style.left=(e.pageX+12)+'px'; tooltip.style.top=(e.pageY+12)+'px'; });
     grp.addEventListener('mouseleave',()=>{ tooltip.style.display='none'; });
 
