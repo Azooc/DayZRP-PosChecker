@@ -198,7 +198,7 @@
     return killEvents.filter(k=>{
       const ts=timeToSec(k.time);
       if(!(ts>=lo && ts<=hi)) return false;
-      // Only show if either player is selected
+      // Only show if victim or attacker is selected
       return selectedPlayers.has(k.victimName) || selectedPlayers.has(k.killerName);
     });
   }
@@ -297,7 +297,7 @@
         const color=playerColors.get(k.victimName)||'#ff0000';
         const outline='#fff';
 
-        // Red "X" marker at the victim location (same scale as dots)
+        // "X" marker at victim location (scaled to current dot size)
         const arm=dotSize*1.1;
         const x1=vicPx.xpx-arm, y1=vicPx.ypx-arm;
         const x2=vicPx.xpx+arm, y2=vicPx.ypx+arm;
@@ -327,12 +327,12 @@
         g.addEventListener('mousemove',(e)=>{ tooltip.style.left=(e.pageX+12)+'px'; tooltip.style.top=(e.pageY+12)+'px'; });
         g.addEventListener('mouseleave',()=>{ tooltip.style.display='none'; });
 
-        // Click => draw crosshair icons for victim & attacker
+        // Click => draw role markers (diamond for victim, triangle for attacker)
         g.addEventListener('click',()=>{
           gHighlights.innerHTML='';
-          drawCrosshair(vicPx.xpx, vicPx.ypx, dotSize*2.2, playerColors.get(k.victimName)||'#ff0000', `${k.victimName} (Victim)`);
+          drawRoleMarker('victim', vicPx.xpx, vicPx.ypx, dotSize, playerColors.get(k.victimName)||'#ff0000', `${k.victimName} (Victim)`, strokeW);
           const killerPx=worldToImagePx(k.killer);
-          drawCrosshair(killerPx.xpx, killerPx.ypx, dotSize*2.2, playerColors.get(k.killerName)||'#ff0000', `${k.killerName} (Attacker)`);
+          drawRoleMarker('attacker', killerPx.xpx, killerPx.ypx, dotSize, playerColors.get(k.killerName)||'#ff0000', `${k.killerName} (Attacker)`, strokeW);
         });
 
         gKills.appendChild(g);
@@ -340,46 +340,50 @@
     }
 
     applyTransform();
+  }
 
-    // helper to draw a clean crosshair icon that scales
-    function drawCrosshair(cx, cy, r, color, label){
-      const group=document.createElementNS('http://www.w3.org/2000/svg','g');
+  // Draw role-specific marker at (cx,cy) with same sizing as dots
+  function drawRoleMarker(role, cx, cy, r, color, label, strokeW){
+    const grp=document.createElementNS('http://www.w3.org/2000/svg','g');
 
-      const outer=document.createElementNS('http://www.w3.org/2000/svg','circle');
-      outer.setAttribute('cx',cx); outer.setAttribute('cy',cy);
-      outer.setAttribute('r',r);
-      outer.setAttribute('fill','none');
-      outer.setAttribute('stroke',color);
-      outer.setAttribute('stroke-width',Math.max(2, baseStroke*0.6));
-
-      const inner=document.createElementNS('http://www.w3.org/2000/svg','circle');
-      inner.setAttribute('cx',cx); inner.setAttribute('cy',cy);
-      inner.setAttribute('r',r*0.25);
-      inner.setAttribute('fill',color);
-      inner.setAttribute('stroke','#fff');
-      inner.setAttribute('stroke-width',Math.max(1, baseStroke*0.4));
-
-      const h=document.createElementNS('http://www.w3.org/2000/svg','line');
-      h.setAttribute('x1',cx-r); h.setAttribute('y1',cy);
-      h.setAttribute('x2',cx+r); h.setAttribute('y2',cy);
-      h.setAttribute('stroke',color); h.setAttribute('stroke-width',Math.max(2, baseStroke*0.6));
-
-      const v=document.createElementNS('http://www.w3.org/2000/svg','line');
-      v.setAttribute('x1',cx); v.setAttribute('y1',cy-r);
-      v.setAttribute('x2',cx); v.setAttribute('y2',cy+r);
-      v.setAttribute('stroke',color); v.setAttribute('stroke-width',Math.max(2, baseStroke*0.6));
-
-      group.appendChild(outer); group.appendChild(h); group.appendChild(v); group.appendChild(inner);
-
-      group.addEventListener('mouseenter',()=>{
-        tooltip.style.display='block';
-        tooltip.textContent=label;
-      });
-      group.addEventListener('mousemove',(e)=>{ tooltip.style.left=(e.pageX+12)+'px'; tooltip.style.top=(e.pageY+12)+'px'; });
-      group.addEventListener('mouseleave',()=>{ tooltip.style.display='none'; });
-
-      gHighlights.appendChild(group);
+    if(role==='victim'){
+      // Diamond: up, right, down, left (radius r)
+      const pts = [
+        [cx, cy - r],
+        [cx + r, cy],
+        [cx, cy + r],
+        [cx - r, cy]
+      ].map(p=>p.join(',')).join(' ');
+      const outline=document.createElementNS('http://www.w3.org/2000/svg','polygon');
+      outline.setAttribute('points', pts);
+      outline.setAttribute('fill', color);
+      outline.setAttribute('stroke', '#fff');
+      outline.setAttribute('stroke-width', strokeW);
+      grp.appendChild(outline);
+    } else {
+      // Attacker: upright equilateral triangle ~ same "radius" as r
+      const a = r;
+      const h = a * Math.sqrt(3); // height for side ~ 2a; using a for comfortable size
+      const pTop = [cx, cy - a];
+      const pBR  = [cx + (h/2)*0.577, cy + a*0.9]; // 0.577 ~ tan(30°) tweak so footprint matches circle nicely
+      const pBL  = [cx - (h/2)*0.577, cy + a*0.9];
+      const pts = [pTop,pBR,pBL].map(p=>p.join(',')).join(' ');
+      const tri=document.createElementNS('http://www.w3.org/2000/svg','polygon');
+      tri.setAttribute('points', pts);
+      tri.setAttribute('fill', color);
+      tri.setAttribute('stroke', '#fff');
+      tri.setAttribute('stroke-width', strokeW);
+      grp.appendChild(tri);
     }
+
+    grp.addEventListener('mouseenter',()=>{
+      tooltip.style.display='block';
+      tooltip.textContent=label;
+    });
+    grp.addEventListener('mousemove',(e)=>{ tooltip.style.left=(e.pageX+12)+'px'; tooltip.style.top=(e.pageY+12)+'px'; });
+    grp.addEventListener('mouseleave',()=>{ tooltip.style.display='none'; });
+
+    gHighlights.appendChild(grp);
   }
 
   function clampPan(){
