@@ -22,7 +22,7 @@
   .stage img{display:block}
   .overlay{position:absolute;left:0;top:0;width:100%;height:100%}
 
-  #playerControls{display:flex;gap:12px;margin:10px 0;align-items:center}
+  #playerControls{display:flex;gap:6px;margin:10px 0}
   #playerList{max-height:180px;overflow:auto;font-size:0.9rem;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px}
   #playerList label{display:flex;gap:8px;align-items:center}
   .colorInput{width:20px;height:20px;padding:0;border:none;cursor:pointer;}
@@ -30,6 +30,18 @@
   .track{opacity:0.9;stroke-linecap:round}
   .poi{transition:all 0.15s ease;}
   .poi.hovered{filter:brightness(1.4);}
+
+  /* Kill X pulse */
+  .kill-x{
+    transform-box: fill-box;
+    transform-origin: center;
+    animation: killPulse 1.3s ease-out infinite;
+  }
+  @keyframes killPulse{
+    0%   { transform:scale(1);   opacity:1; }
+    55%  { transform:scale(1.15);opacity:0.95; }
+    100% { transform:scale(1);   opacity:1; }
+  }
 
   #tooltip {
     position:absolute;
@@ -130,10 +142,8 @@
 
   const killRe=/^(?<time>\d{2}:\d{2}:\d{2})\s*\|\s*Player\s+"(?<victim>.+?)"\s*\(DEAD\)\s*\(id=(?<vid>\d+)\s+pos=<\s*(?<vx>[-+\d.]+)\s*,\s*(?<vz>[-+\d.]+)\s*,\s*(?<vy>[-+\d.]+)\s*>\)\s*killed by\s*Player\s+"(?<killer>.+?)"\s*\(id=(?<kid>\d+)\s+pos=<\s*(?<kx>[-+\d.]+)\s*,\s*(?<kz>[-+\d.]+)\s*,\s*(?<ky>[-+\d.]+)\s*>\)\s*with\s*(?<weapon>.+?)\s*from\s*(?<dist>[-+\d.]+)\s*meters\s*$/i;
 
-  // AI kills (anything after "killed by" that is NOT "Player ...")
   const aiRe=/^(?<time>\d{2}:\d{2}:\d{2})\s*\|\s*Player\s+"(?<victim>.+?)"\s*\(DEAD\)\s*\(id=(?<vid>\d+)\s+pos=<\s*(?<vx>[-+\d.]+)\s*,\s*(?<vz>[-+\d.]+)\s*,\s*(?<vy>[-+\d.]+)\s*>\)\s*killed by\s*(?!Player\b)(?<ai>.+?)\s*$/i;
 
-  // Suicide
   const suicideRe=/^(?<time>\d{2}:\d{2}:\d{2})\s*\|\s*Player\s+"(?<victim>.+?)"\s*\(id=(?<vid>\d+)\s+pos=<\s*(?<vx>[-+\d.]+)\s*,\s*(?<vz>[-+\d.]+)\s*,\s*(?<vy>[-+\d.]+)\s*>\)\s*committed suicide\s*$/i;
 
   const timeToSec = t => { const [H,M,S]=t.split(':').map(n=>+n); return (H*3600+M*60+S)|0; };
@@ -225,14 +235,12 @@
     const a=timeToSec(startTimeSel.value||'00:00:00');
     const b=timeToSec(endTimeSel.value||'00:00:00');
     const lo=Math.min(a,b), hi=Math.max(a,b);
-    // PvP only if victim or attacker is selected
     return killEvents.filter(k=>{
       const ts=timeToSec(k.time);
       if(!(ts>=lo && ts<=hi)) return false;
       return selectedPlayers.has(k.victimName) || selectedPlayers.has(k.killerName);
     });
   }
-
   function aiInRangeFiltered(){
     const a=timeToSec(startTimeSel.value||'00:00:00');
     const b=timeToSec(endTimeSel.value||'00:00:00');
@@ -243,7 +251,6 @@
       return selectedPlayers.has(k.victimName);
     });
   }
-
   function suicidesInRangeFiltered(){
     const a=timeToSec(startTimeSel.value||'00:00:00');
     const b=timeToSec(endTimeSel.value||'00:00:00');
@@ -379,26 +386,31 @@
     applyTransform();
   }
 
-  // Draw an "X" marker at (cx,cy)
+  // Draw a pulsing, bolder "X" marker
   function drawKillX(cx, cy, r, strokeW, color, outline, hoverText, onClick){
     const arm=r*1.1;
     const x1=cx-arm, y1=cy-arm, x2=cx+arm, y2=cy+arm;
     const x3=cx-arm, y3=cy+arm, x4=cx+arm, y4=cy-arm;
 
+    // bolder multipliers
+    const innerW = strokeW * 1.35;
+    const outerW = strokeW * 2.2;
+
     const l1=document.createElementNS('http://www.w3.org/2000/svg','line');
     l1.setAttribute('x1',x1); l1.setAttribute('y1',y1);
     l1.setAttribute('x2',x2); l1.setAttribute('y2',y2);
-    l1.setAttribute('stroke',color); l1.setAttribute('stroke-width',strokeW); l1.setAttribute('stroke-linecap','round');
+    l1.setAttribute('stroke',color); l1.setAttribute('stroke-width',innerW); l1.setAttribute('stroke-linecap','round');
 
     const l2=document.createElementNS('http://www.w3.org/2000/svg','line');
     l2.setAttribute('x1',x3); l2.setAttribute('y1',y3);
     l2.setAttribute('x2',x4); l2.setAttribute('y2',y4);
-    l2.setAttribute('stroke',color); l2.setAttribute('stroke-width',strokeW); l2.setAttribute('stroke-linecap','round');
+    l2.setAttribute('stroke',color); l2.setAttribute('stroke-width',innerW); l2.setAttribute('stroke-linecap','round');
 
-    const ol1=l1.cloneNode(true); ol1.setAttribute('stroke',outline); ol1.setAttribute('stroke-width',strokeW*1.4);
-    const ol2=l2.cloneNode(true); ol2.setAttribute('stroke',outline); ol2.setAttribute('stroke-width',strokeW*1.4);
+    const ol1=l1.cloneNode(true); ol1.setAttribute('stroke',outline); ol1.setAttribute('stroke-width',outerW);
+    const ol2=l2.cloneNode(true); ol2.setAttribute('stroke',outline); ol2.setAttribute('stroke-width',outerW);
 
     const g=document.createElementNS('http://www.w3.org/2000/svg','g');
+    g.setAttribute('class','kill-x');
     g.appendChild(ol1); g.appendChild(ol2); g.appendChild(l1); g.appendChild(l2);
 
     g.addEventListener('mouseenter',()=>{ tooltip.style.display='block'; tooltip.textContent=hoverText; });
