@@ -380,34 +380,44 @@
   }
 
   // Draw an "X" marker at (cx,cy)
-  function drawKillX(cx, cy, r, strokeW, color, outline, hoverText, onClick){
-    const arm=r*1.1;
-    const x1=cx-arm, y1=cy-arm, x2=cx+arm, y2=cy+arm;
-    const x3=cx-arm, y3=cy+arm, x4=cx+arm, y4=cy-arm;
+function drawKillX(cx, cy, r, strokeW, color, outline, hoverText, onClick){
+  const arm = r * 1.8; // bigger X
+  const x1 = cx - arm, y1 = cy - arm, x2 = cx + arm, y2 = cy + arm;
+  const x3 = cx - arm, y3 = cy + arm, x4 = cx + arm, y4 = cy - arm;
 
-    const l1=document.createElementNS('http://www.w3.org/2000/svg','line');
-    l1.setAttribute('x1',x1); l1.setAttribute('y1',y1);
-    l1.setAttribute('x2',x2); l1.setAttribute('y2',y2);
-    l1.setAttribute('stroke',color); l1.setAttribute('stroke-width',strokeW); l1.setAttribute('stroke-linecap','round');
+  const l1 = document.createElementNS('http://www.w3.org/2000/svg','line');
+  l1.setAttribute('x1',x1); l1.setAttribute('y1',y1);
+  l1.setAttribute('x2',x2); l1.setAttribute('y2',y2);
+  l1.setAttribute('stroke',color);
+  l1.setAttribute('stroke-width',strokeW * 1.5); // bolder
+  l1.setAttribute('stroke-linecap','round');
 
-    const l2=document.createElementNS('http://www.w3.org/2000/svg','line');
-    l2.setAttribute('x1',x3); l2.setAttribute('y1',y3);
-    l2.setAttribute('x2',x4); l2.setAttribute('y2',y4);
-    l2.setAttribute('stroke',color); l2.setAttribute('stroke-width',strokeW); l2.setAttribute('stroke-linecap','round');
+  const l2 = document.createElementNS('http://www.w3.org/2000/svg','line');
+  l2.setAttribute('x1',x3); l2.setAttribute('y1',y3);
+  l2.setAttribute('x2',x4); l2.setAttribute('y2',y4);
+  l2.setAttribute('stroke',color);
+  l2.setAttribute('stroke-width',strokeW * 1.5);
+  l2.setAttribute('stroke-linecap','round');
 
-    const ol1=l1.cloneNode(true); ol1.setAttribute('stroke',outline); ol1.setAttribute('stroke-width',strokeW*1.4);
-    const ol2=l2.cloneNode(true); ol2.setAttribute('stroke',outline); ol2.setAttribute('stroke-width',strokeW*1.4);
+  const ol1 = l1.cloneNode(true);
+  ol1.setAttribute('stroke', outline);
+  ol1.setAttribute('stroke-width', strokeW * 2.5); // thicker outline
 
-    const g=document.createElementNS('http://www.w3.org/2000/svg','g');
-    g.appendChild(ol1); g.appendChild(ol2); g.appendChild(l1); g.appendChild(l2);
+  const ol2 = l2.cloneNode(true);
+  ol2.setAttribute('stroke', outline);
+  ol2.setAttribute('stroke-width', strokeW * 2.5);
 
-    g.addEventListener('mouseenter',()=>{ tooltip.style.display='block'; tooltip.textContent=hoverText; });
-    g.addEventListener('mousemove',(e)=>{ tooltip.style.left=(e.pageX+12)+'px'; tooltip.style.top=(e.pageY+12)+'px'; });
-    g.addEventListener('mouseleave',()=>{ tooltip.style.display='none'; });
-    if(onClick){ g.addEventListener('click', onClick); }
+  const g = document.createElementNS('http://www.w3.org/2000/svg','g');
+  g.appendChild(ol1); g.appendChild(ol2);
+  g.appendChild(l1); g.appendChild(l2);
 
-    gKills.appendChild(g);
-  }
+  g.addEventListener('mouseenter',()=>{ tooltip.style.display='block'; tooltip.textContent=hoverText; });
+  g.addEventListener('mousemove',(e)=>{ tooltip.style.left=(e.pageX+12)+'px'; tooltip.style.top=(e.pageY+12)+'px'; });
+  g.addEventListener('mouseleave',()=>{ tooltip.style.display='none'; });
+  if(onClick){ g.addEventListener('click', onClick); }
+
+  gKills.appendChild(g);
+}
 
   // Role marker at (cx,cy): diamond (victim) or triangle (attacker)
   function drawRoleMarker(role, cx, cy, r, color, label, strokeW){
