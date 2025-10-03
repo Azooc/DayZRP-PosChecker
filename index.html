@@ -22,7 +22,7 @@
   .stage img{display:block}
   .overlay{position:absolute;left:0;top:0;width:100%;height:100%}
 
-  #playerControls{display:flex;gap:6px;margin:10px 0}
+  #playerControls{display:flex;gap:12px;margin:10px 0;align-items:center}
   #playerList{max-height:180px;overflow:auto;font-size:0.9rem;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px}
   #playerList label{display:flex;gap:8px;align-items:center}
   .colorInput{width:20px;height:20px;padding:0;border:none;cursor:pointer;}
@@ -43,6 +43,7 @@
     z-index:3000;
     display:none;
   }
+  .checkbox{display:inline-flex;gap:8px;align-items:center}
 </style>
 </head>
 <body>
@@ -59,6 +60,7 @@
       <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:center">
         <div>Start: <select id="startTime"></select></div>
         <div>End: <select id="endTime"></select></div>
+        <label class="checkbox"><input type="checkbox" id="killToggle"> Kill Logs</label>
       </div>
       <div id="playerControls">
         <button class="btn" id="selectAllBtn">Select All</button>
@@ -78,6 +80,8 @@
           </defs>
           <g id="tracks"></g>
           <g id="dots"></g>
+          <g id="kills"></g>
+          <g id="highlights"></g>
         </svg>
       </div>
     </div>
@@ -96,6 +100,8 @@
   const overlay=document.getElementById('overlay');
   const gTracks=document.getElementById('tracks');
   const gDots=document.getElementById('dots');
+  const gKills=document.getElementById('kills');
+  const gHighlights=document.getElementById('highlights');
   const fitBtn=document.getElementById('fitBtn');
   const startTimeSel=document.getElementById('startTime');
   const endTimeSel=document.getElementById('endTime');
@@ -103,15 +109,17 @@
   const selectAllBtn=document.getElementById('selectAllBtn');
   const clearAllBtn=document.getElementById('clearAllBtn');
   const tooltip=document.getElementById('tooltip');
+  const killToggle=document.getElementById('killToggle');
 
   let snapshots=new Map(),orderedTimestamps=[];
+  let killEvents=[]; // {time,victimName,killerName,weapon,distance,victim:{x,z,y},killer:{x,z,y}}
   let imgW=0,imgH=0;
   let scale=1,tx=0,ty=0,fitScale=1;
   let MIN_SCALE=0.001,MAX_SCALE=200;
   let selectedPlayers=new Set();
   let playerColors=new Map();
 
-  // ---- Hardcoded scaling values ----
+  // ---- Hardcoded scaling values (from your tuned settings) ----
   const baseDotSize=25;
   const baseStroke=5;
   const baseLine=10;
@@ -120,15 +128,35 @@
   const lineMin=0.04;
   const lineMax=1.5;
 
-  const lineRe=/^(?<time>\d{2}:\d{2}:\d{2})\s*\|\s*Player\s+"(?<name>.+?)"\s*\(id=(?<id>\d+)\s+pos=<\s*(?<x>[-+\d.]+)\s*,\s*(?<z>[-+\d.]+)\s*,\s*(?<y>[-+\d.]+)\s*>\)\s*$/i;
+  // position-only player line
+  const posRe=/^(?<time>\d{2}:\d{2}:\d{2})\s*\|\s*Player\s+"(?<name>.+?)"\s*\(id=(?<id>\d+)\s+pos=<\s*(?<x>[-+\d.]+)\s*,\s*(?<z>[-+\d.]+)\s*,\s*(?<y>[-+\d.]+)\s*>\)\s*$/i;
+
+  // kill line
+  const killRe=/^(?<time>\d{2}:\d{2}:\d{2})\s*\|\s*Player\s+"(?<victim>.+?)"\s*\(DEAD\)\s*\(id=(?<vid>\d+)\s+pos=<\s*(?<vx>[-+\d.]+)\s*,\s*(?<vz>[-+\d.]+)\s*,\s*(?<vy>[-+\d.]+)\s*>\)\s*killed by\s*Player\s+"(?<killer>.+?)"\s*\(id=(?<kid>\d+)\s+pos=<\s*(?<kx>[-+\d.]+)\s*,\s*(?<kz>[-+\d.]+)\s*,\s*(?<ky>[-+\d.]+)\s*>\)\s*with\s*(?<weapon>.+?)\s*from\s*(?<dist>[-+\d.]+)\s*meters\s*$/i;
 
   function parseADM(text){
-    snapshots.clear();orderedTimestamps=[];
+    snapshots.clear(); orderedTimestamps=[]; killEvents=[];
     for(const raw of text.split(/\r?\n/)){
-      const m=raw.match(lineRe);if(!m) continue;
-      const {time,name,id,x,z,y}=m.groups;
-      if(!snapshots.has(time)){snapshots.set(time,[]);orderedTimestamps.push(time);}
-      snapshots.get(time).push({name,id,x:+x,z:+z,y:+y});
+      let m=raw.match(posRe);
+      if(m){
+        const {time,name,id,x,z,y}=m.groups;
+        if(!snapshots.has(time)){snapshots.set(time,[]);orderedTimestamps.push(time);}
+        snapshots.get(time).push({name,id,x:+x,z:+z,y:+y});
+        continue;
+      }
+      m=raw.match(killRe);
+      if(m){
+        const g=m.groups;
+        killEvents.push({
+          time:g.time,
+          victimName:g.victim,
+          killerName:g.killer,
+          weapon:g.weapon.trim(),
+          distance:+g.dist,
+          victim:{x:+g.vx,z:+g.vz,y:+g.vy},
+          killer:{x:+g.kx,z:+g.kz,y:+g.ky}
+        });
+      }
     }
   }
 
@@ -170,6 +198,15 @@
       }
     }
     return map;
+  }
+
+  function killsInRange(){
+    const a=orderedTimestamps.indexOf(startTimeSel.value);
+    const b=orderedTimestamps.indexOf(endTimeSel.value);
+    if(a<0||b<0) return [];
+    const [i0,i1]=[Math.min(a,b),Math.max(a,b)];
+    const allowed=new Set(orderedTimestamps.slice(i0,i1+1));
+    return killEvents.filter(k => allowed.has(k.time));
   }
 
   function ensureDefaults(names){
@@ -214,7 +251,7 @@
   }
 
   function renderRange(){
-    gTracks.innerHTML='';gDots.innerHTML='';
+    gTracks.innerHTML='';gDots.innerHTML='';gKills.innerHTML='';gHighlights.innerHTML='';
     tooltip.style.display='none';
 
     const paths=gatherPlayersInRange();
@@ -227,6 +264,7 @@
     const strokeW=baseStroke*dotFactor;
     const lineW=baseLine*lineFactor;
 
+    // Player paths & dots
     paths.forEach((positions,name)=>{
       if(!selectedPlayers.has(name))return;
       const color=playerColors.get(name)||'#ff0000';
@@ -275,6 +313,80 @@
         gDots.appendChild(c);
       }
     });
+
+    // Kill markers (if toggle enabled)
+    if(killToggle.checked){
+      const kills=killsInRange();
+      for(const k of kills){
+        const vicPx=worldToImagePx(k.victim);
+        const killerPx=worldToImagePx(k.killer);
+
+        const color=playerColors.get(k.victimName)||'#ff0000';
+        const outline='#fff';
+
+        // Draw an X centered at victim position
+        const arm = dotSize*1.1;
+        const x1 = vicPx.xpx - arm, y1 = vicPx.ypx - arm;
+        const x2 = vicPx.xpx + arm, y2 = vicPx.ypx + arm;
+        const x3 = vicPx.xpx - arm, y3 = vicPx.ypx + arm;
+        const x4 = vicPx.xpx + arm, y4 = vicPx.ypx - arm;
+
+        const l1=document.createElementNS('http://www.w3.org/2000/svg','line');
+        l1.setAttribute('x1',x1); l1.setAttribute('y1',y1);
+        l1.setAttribute('x2',x2); l1.setAttribute('y2',y2);
+        l1.setAttribute('stroke',color);
+        l1.setAttribute('stroke-width',strokeW);
+        l1.setAttribute('stroke-linecap','round');
+
+        const l2=document.createElementNS('http://www.w3.org/2000/svg','line');
+        l2.setAttribute('x1',x3); l2.setAttribute('y1',y3);
+        l2.setAttribute('x2',x4); l2.setAttribute('y2',y4);
+        l2.setAttribute('stroke',color);
+        l2.setAttribute('stroke-width',strokeW);
+        l2.setAttribute('stroke-linecap','round');
+
+        // white outline (underlay) for visibility
+        const ol1=l1.cloneNode(true); ol1.setAttribute('stroke',outline); ol1.setAttribute('stroke-width',strokeW*1.4);
+        const ol2=l2.cloneNode(true); ol2.setAttribute('stroke',outline); ol2.setAttribute('stroke-width',strokeW*1.4);
+
+        // group for events & listeners
+        const g=document.createElementNS('http://www.w3.org/2000/svg','g');
+        g.appendChild(ol1); g.appendChild(ol2); g.appendChild(l1); g.appendChild(l2);
+
+        g.addEventListener('mouseenter',()=>{
+          tooltip.style.display='block';
+          tooltip.textContent=`${k.victimName} killed by ${k.killerName}\nwith ${k.weapon} from ${k.distance.toFixed(2)} meters`;
+        });
+        g.addEventListener('mousemove',(e)=>{
+          tooltip.style.left=(e.pageX+12)+'px';
+          tooltip.style.top=(e.pageY+12)+'px';
+        });
+        g.addEventListener('mouseleave',()=>{ tooltip.style.display='none'; });
+
+        // On click: place two "!" markers
+        g.addEventListener('click',()=>{
+          gHighlights.innerHTML='';
+          const makeBang = (px,py,fill)=> {
+            const t=document.createElementNS('http://www.w3.org/2000/svg','text');
+            t.setAttribute('x',px); t.setAttribute('y',py);
+            t.setAttribute('text-anchor','middle');
+            t.setAttribute('dominant-baseline','central');
+            t.setAttribute('font-size', dotSize*3);
+            t.setAttribute('font-weight','900');
+            t.setAttribute('fill', fill);
+            t.setAttribute('stroke', '#000');
+            t.setAttribute('stroke-width', Math.max(2, strokeW*0.8));
+            t.textContent='!';
+            return t;
+          };
+          gHighlights.appendChild(makeBang(vicPx.xpx, vicPx.ypx, '#ffea00'));
+          gHighlights.appendChild(makeBang(killerPx.xpx, killerPx.ypx, '#ffea00'));
+        });
+
+        gKills.appendChild(g);
+      }
+    }
+
     applyTransform();
   }
 
@@ -314,6 +426,7 @@
   fitBtn.addEventListener('click',fitToViewport);
   startTimeSel.addEventListener('change',()=>{populatePlayerListForRange();renderRange();});
   endTimeSel.addEventListener('change',()=>{populatePlayerListForRange();renderRange();});
+  killToggle.addEventListener('change',()=>{renderRange();});
   selectAllBtn.addEventListener('click',()=>{
     const paths=gatherPlayersInRange();selectedPlayers=new Set(paths.keys());
     playerListDiv.querySelectorAll('input[type=checkbox]').forEach(cb=>cb.checked=true);
