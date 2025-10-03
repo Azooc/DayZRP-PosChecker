@@ -479,9 +479,9 @@
     applyTransform();
   }
 
-  // Draw an "X" marker at (cx,cy) — bigger & bolder
+  // Draw an "X" marker at (cx,cy)
   function drawKillX(cx, cy, r, strokeW, color, outline, hoverText, onClick){
-    const arm=r*1.8; // bigger X
+    const arm=r*1.8; // sieze X
     const x1=cx-arm, y1=cy-arm, x2=cx+arm, y2=cy+arm;
     const x3=cx-arm, y3=cy+arm, x4=cx+arm, y4=cy-arm;
 
@@ -509,7 +509,7 @@
     gKills.appendChild(g);
   }
 
-  // Role marker at (cx,cy): diamond (victim) or triangle (attacker), tooltip shows position
+  // Role marker at (cx,cy): diamond (victim) triangle (attacker)
   function drawRoleMarker(role, cx, cy, r, color, name, pos, strokeW){
     const grp=document.createElementNS('http://www.w3.org/2000/svg','g');
     const labelText = `${name} (${role==='victim'?'Victim':'Attacker'})\nX:${pos.x.toFixed(1)} Z:${pos.z.toFixed(1)} Y:${pos.y.toFixed(1)}`;
@@ -549,7 +549,7 @@
     gHighlights.appendChild(grp);
   }
 
-  // Draw an 8-point burst (impact star) at (cx,cy)
+  // Draw burst star at (cx,cy)
   function drawBurst(cx, cy, r, strokeW, color, outline, hoverText, onClick){
     const points = [];
     const spikes = 8;
