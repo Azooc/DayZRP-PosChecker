@@ -80,23 +80,33 @@
 <script>
 (() => {
   // ----------------- Map boot -----------------
-  // Enoch map info from maps/enoch.js (depends on mapUtils.js' Arma3Map scaffolding)
   const mapInfos = Arma3Map?.Maps?.enoch;
   if (!mapInfos) {
     alert('maps/enoch.js not loaded or Arma3Map.Maps.enoch missing.');
     return;
   }
 
-  // Build Leaflet map using Enoch settings
+  // Allow over-zoom beyond native tiles
+  const OVERZOOM_LEVELS = 4; // how many extra zoom levels beyond native tiles
+
+  // Build Leaflet map using Enoch settings, but bump maxZoom to allow over-zoom
   const map = L.map('map', {
     minZoom: mapInfos.minZoom,
-    maxZoom: mapInfos.maxZoom,
-    crs: mapInfos.CRS
+    maxZoom: mapInfos.maxZoom + OVERZOOM_LEVELS, // allow zooming past native max
+    crs: mapInfos.CRS,
+    zoomDelta: 0.25,
+    zoomSnap: 0.25
   });
 
-  L.tileLayer('.' + mapInfos.tilePattern, {
+  // IMPORTANT: This page previously used '.' + mapInfos.tilePattern.
+  // Keep that as-is if your enoch.js uses a RELATIVE pattern.
+  // If your enoch.js tilePattern is an ABSOLUTE URL (https://...), remove the leading '.'.
+  const tileLayer = L.tileLayer('.' + mapInfos.tilePattern, {
     attribution: mapInfos.attribution,
-    tileSize: mapInfos.tileSize
+    tileSize: mapInfos.tileSize,
+    maxNativeZoom: mapInfos.maxZoom,                // real tiles end here
+    maxZoom: mapInfos.maxZoom + OVERZOOM_LEVELS,    // over-zoom beyond native
+    noWrap: true
   }).addTo(map);
 
   map.setView(mapInfos.center, mapInfos.defaultZoom);
@@ -119,7 +129,6 @@
   const fitBtn=document.getElementById('fitBtn');
 
   // ----------------- State -----------------
-  const WORLD=12800; // game world size (used in your ADM)
   const timeToSec = t => { const [H,M,S]=t.split(':').map(n=>+n); return (H*3600+M*60+S)|0; };
   const worldToLatLng = p => L.latLng(p.z, p.x); // lat=z, lng=x in this CRS
 
@@ -539,7 +548,7 @@
   function fitToData(){
     const latlngs=[];
     const paths=gatherPlayersInRange();
-    for(const [name,positions] of paths){
+    for(const [_,positions] of paths){
       for(const p of positions) latlngs.push(worldToLatLng(p));
     }
     if(latlngs.length){
