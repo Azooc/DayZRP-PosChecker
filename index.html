@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1" />
 <title>ADM Map Viewer (Leaflet Enoch)</title>
 
-<!-- Leaflet (same version you had working) -->
+<!-- Leaflet 1.6.0 -->
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.6.0/dist/leaflet.css" />
 <script src="https://unpkg.com/leaflet@1.6.0/dist/leaflet.js"></script>
 
@@ -43,6 +43,14 @@
     padding:4px 8px; border-radius:4px; pointer-events:none; white-space:pre;
     z-index:3000; display:none;
   }
+
+  /* Small banner for tile errors */
+  #tileErr {
+    position:fixed; left:12px; bottom:12px; max-width:60ch;
+    background:#b91c1c; color:#fff; padding:8px 10px; border-radius:6px;
+    font:12px/1.3 ui-sans-serif,system-ui; display:none; z-index:5000;
+    box-shadow:0 6px 20px rgba(0,0,0,0.4);
+  }
 </style>
 </head>
 <body>
@@ -75,6 +83,7 @@
   </div>
 
   <div id="tooltip"></div>
+  <div id="tileErr"></div>
 
 <script>
 (() => {
@@ -85,13 +94,18 @@
     return;
   }
 
-  // Over-zoom beyond native tiles
-  const EXTRA_ZOOM = 4; // tweak 3–6 to taste
+  // The server you provided has tiles at z = 1 .. 7
+  const MIN_Z = 1;
+  const NATIVE_MAX_Z = 7;
+  const EXTRA_ZOOM = 2; // allow zooming to z=9 (upscaled)
+
+  // Clamp the default zoom into available range
+  const initialZoom = Math.max(MIN_Z, Math.min(mapInfos.defaultZoom || NATIVE_MAX_Z, NATIVE_MAX_Z));
 
   const map = L.map('map', {
-    minZoom: mapInfos.minZoom,
-    maxZoom: mapInfos.maxZoom + EXTRA_ZOOM,
-    crs: mapInfos.CRS,
+    minZoom: MIN_Z,
+    maxZoom: NATIVE_MAX_Z + EXTRA_ZOOM,
+    crs: mapInfos.CRS,     // keep the Enoch CRS so your ADM x/z positions align
     zoomDelta: 0.25,
     zoomSnap: 0.25
   });
@@ -99,16 +113,32 @@
   // Use your friend's hosted Livonia tiles (XYZ)
   const TILE_URL = 'https://www.dayzrp.com/images/map/livonia/{z}/{x}/{y}.webp';
 
-  L.tileLayer(TILE_URL, {
-    attribution: mapInfos.attribution,
-    tileSize: mapInfos.tileSize,
-    maxNativeZoom: mapInfos.maxZoom,      // real highest zoom on the server
-    maxZoom: mapInfos.maxZoom + EXTRA_ZOOM,
+  const tiles = L.tileLayer(TILE_URL, {
+    attribution: mapInfos.attribution || 'Livonia tiles',
+    tileSize: mapInfos.tileSize || 256,
+    maxNativeZoom: NATIVE_MAX_Z,
+    maxZoom: NATIVE_MAX_Z + EXTRA_ZOOM,
+    noWrap: true,
     crossOrigin: true,
     detectRetina: false
   }).addTo(map);
 
-  map.setView(mapInfos.center, mapInfos.defaultZoom);
+  // Show a small banner if a tile fails to load — helps us see z/x/y Leaflet is requesting
+  const errBox = document.getElementById('tileErr');
+  tiles.on('tileerror', (e) => {
+    try {
+      const u = new URL(e.tile.src);
+      const parts = u.pathname.split('/').slice(-3); // [z,x,y.webp]
+      errBox.style.display = 'block';
+      errBox.textContent = `Tile load error for z/x/y: ${parts.join(' / ')}  →  ${e.tile.src}`;
+    } catch {
+      errBox.style.display = 'block';
+      errBox.textContent = `Tile load error: ${e.tile?.src || '(unknown URL)'}`;
+    }
+  });
+
+  // Use mapInfos center but clamp zoom to what the server has
+  map.setView(mapInfos.center, initialZoom);
 
   // Optional helpers
   L.latlngGraticule().addTo(map);
@@ -393,7 +423,6 @@
     L.polyline(latlngs,{color:darkerColor(color),weight:weight??5,opacity:0.9}).addTo(tracksLayer);
   }
 
-  // Kill "X" (with white outline)
   function addKillX(center, color, weight){
     const arm = 40;
     const c = worldToLatLng(center);
@@ -415,7 +444,6 @@
     return L.layerGroup([a1w,a1,a2w,a2]);
   }
 
-  // 8-point burst (impact star) with outline
   function addBurst(center, color, weight){
     const c = worldToLatLng(center);
     const rOuter = 50, rInner = rOuter*0.45, spikes=8;
@@ -430,7 +458,6 @@
     return group;
   }
 
-  // Role markers with position in tooltip
   function addDiamond(center, color, size, name){
     const c=worldToLatLng(center), r=size??40;
     const pts=[ L.latLng(c.lat - r, c.lng),
@@ -455,35 +482,29 @@
     poly.on('mouseout', hideTooltip);
   }
 
-  // ----------------- Render -----------------
+  // ----------------- Render / Fit -----------------
   function renderRange(){
     clearAllLayers(); hideTooltip();
-
     const paths=gatherPlayersInRange();
 
-    // Tracks & dots
     paths.forEach((positions,name)=>{
       if(!selectedPlayers.has(name))return;
       const color=playerColors.get(name)||'#ff0000';
       positions.sort((a,b)=>timeToSec(a.time)-timeToSec(b.time));
-
       if(positions.length>1){
         for(let i=1;i<positions.length;i++){
           addTrack(positions[i-1], positions[i], color, 6);
         }
       }
-
       for(const pos of positions){
         addDot(pos, color, `${name}\n${pos.time}\nX:${pos.x.toFixed(1)} Z:${pos.z.toFixed(1)} Y:${pos.y.toFixed(1)}`, 7);
       }
     });
 
-    // Kills
     if(killToggle.checked){
       for(const k of killsInRangeFiltered()){
         const color=playerColors.get(k.victimName)||'#ff0000';
-        const g=addKillX(k.victim, color, 6);
-        g.addTo(killsLayer);
+        const g=addKillX(k.victim, color, 6).addTo(killsLayer);
         const tip=`${k.victimName} killed by ${k.killerName}\nwith ${k.weapon} from ${k.distance.toFixed(2)} m\n${k.time}`;
         g.on('mouseover', e=>showTooltip(e.originalEvent.pageX,e.originalEvent.pageY,tip));
         g.on('mousemove', e=>moveTooltip(e.originalEvent.pageX,e.originalEvent.pageY));
@@ -510,7 +531,6 @@
       }
     }
 
-    // Damage
     if(damageToggle.checked){
       for(const ev of damagePvpInRangeFiltered()){
         const color=playerColors.get(ev.victimName)||'#ff0000';
@@ -540,7 +560,6 @@
     }
   }
 
-  // ----------------- Fit to data -----------------
   function fitToData(){
     const latlngs=[];
     const paths=gatherPlayersInRange();
