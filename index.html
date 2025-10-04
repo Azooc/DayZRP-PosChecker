@@ -86,26 +86,21 @@
     return;
   }
 
-  // Allow over-zoom beyond native tiles
-  const OVERZOOM_LEVELS = 4; // how many extra zoom levels beyond native tiles
-
-  // Build Leaflet map using Enoch settings, but bump maxZoom to allow over-zoom
   const map = L.map('map', {
     minZoom: mapInfos.minZoom,
-    maxZoom: mapInfos.maxZoom + OVERZOOM_LEVELS, // allow zooming past native max
+    maxZoom: mapInfos.maxZoom + 4, // allow extra over-zoom
     crs: mapInfos.CRS,
     zoomDelta: 0.25,
     zoomSnap: 0.25
   });
 
-  // IMPORTANT: This page previously used '.' + mapInfos.tilePattern.
-  // Keep that as-is if your enoch.js uses a RELATIVE pattern.
-  // If your enoch.js tilePattern is an ABSOLUTE URL (https://...), remove the leading '.'.
-  const tileLayer = L.tileLayer('.' + mapInfos.tilePattern, {
+  // If your tilePattern is RELATIVE in enoch.js, keep '.' prefix.
+  // If it's ABSOLUTE (starts with http), remove the dot.
+  const tl = L.tileLayer('.' + mapInfos.tilePattern, {
     attribution: mapInfos.attribution,
     tileSize: mapInfos.tileSize,
-    maxNativeZoom: mapInfos.maxZoom,                // real tiles end here
-    maxZoom: mapInfos.maxZoom + OVERZOOM_LEVELS,    // over-zoom beyond native
+    maxNativeZoom: mapInfos.maxZoom,
+    maxZoom: mapInfos.maxZoom + 4,
     noWrap: true
   }).addTo(map);
 
@@ -164,7 +159,6 @@
 
   // ----------------- Colors -----------------
   function darkerColor(hex){
-    // quick n dirty: draw and read pixel
     const c=document.createElement("canvas").getContext("2d");
     c.fillStyle=hex;c.fillRect(0,0,1,1);
     const [r,g,b]=c.getImageData(0,0,1,1).data;
@@ -180,13 +174,29 @@
 
   const suicideRe=/^(?<time>\d{2}:\d{2}:\d{2})\s*\|\s*Player\s+"(?<victim>.+?)"\s*\(id=(?<vid>\d+)\s+pos=<\s*(?<vx>[-+\d.]+)\s*,\s*(?<vz>[-+\d.]+)\s*,\s*(?<vy>[-+\d.]+)\s*>\)\s*committed suicide\s*$/i;
 
-  // PvP damage — optional (DEAD), optional [HP], optional distance
   const dmgPvpRe =
   /^(?<time>\d{2}:\d{2}:\d{2})\s*\|\s*Player\s+"(?<victim>.+?)"\s*(?:\(DEAD\)\s*)?\(id=(?<vid>\d+)\s+pos=<\s*(?<vx>[-+\d.]+)\s*,\s*(?<vz>[-+\d.]+)\s*,\s*(?<vy>[-+\d.]+)\s*>\)\s*(?:\[\s*HP:\s*(?<hp>[-+\d.]+)\s*\]\s*)?hit by\s*Player\s+"(?<attacker>.+?)"\s*\(id=(?<aid>\d+)\s+pos=<\s*(?<ax>[-+\d.]+)\s*,\s*(?<az>[-+\d.]+)\s*,\s*(?<ay>[-+\d.]+)\s*>\)\s*into\s*(?<part>[A-Za-z]+)\(\d+\)\s*for\s*(?<dmg>[-+\d.]+)\s*damage\s*\((?<attack>[^)]+)\)\s*with\s*(?<weapon>.+?)(?:\s*from\s*(?<dist>[-+\d.]+)\s*meters)?\s*$/i;
 
-  // AI/animal → player damage — optional [HP], optional distance
   const dmgAiRe =
   /^(?<time>\d{2}:\d{2}:\d{2})\s*\|\s*Player\s+"(?<victim>.+?)"\s*\(id=(?<vid>\d+)\s+pos=<\s*(?<vx>[-+\d.]+)\s*,\s*(?<vz>[-+\d.]+)\s*,\s*(?<vy>[-+\d.]+)\s*>\)\s*(?:\[\s*HP:\s*(?<hp>[-+\d.]+)\s*\]\s*)?hit by\s*(?<ai>.+?)\s*into\s*(?<part>[A-Za-z]+)\(\d+\)\s*for\s*(?<dmg>[-+\d.]+)\s*damage\s*\((?<attack>[^)]+)\)(?:\s*from\s*(?<dist>[-+\d.]+)\s*meters)?\s*$/i;
+
+  // ----------------- Size helpers (smaller at low zoom, grow gently) -----------------
+  function dotRadius(){
+    const z = map.getZoom();
+    const base = 2;                 // very small when zoomed out
+    const grow = (z - mapInfos.minZoom) * 0.6;
+    return Math.max(2, base + grow); // clamp minimum to 2px
+  }
+  function lineWeight(){
+    const z = map.getZoom();
+    const base = 1;                  // thin when zoomed out
+    const grow = (z - mapInfos.minZoom) * 0.35;
+    return Math.max(1, base + grow); // clamp minimum to 1px
+  }
+  function arrowPixelSize(){
+    const z = map.getZoom();
+    return Math.max(6, 4 + (z - mapInfos.minZoom) * 1.2); // arrow head size in pixels
+  }
 
   // ----------------- Parsing -----------------
   function parseADM(text){
@@ -381,23 +391,58 @@
   }
 
   // ----------------- Leaflet drawing helpers -----------------
-  function addDot(pos, color, tooltipText, radius){
+  function addDot(pos, color, tooltipText){
     const latlng = worldToLatLng(pos);
-    const r = radius ?? 7;
+    const r = dotRadius();
     const m = L.circleMarker(latlng, {
-      radius: r, color: '#fff', weight: 2, fillColor: color, fillOpacity: 1
+      radius: r, color: '#fff', weight: 1.5, fillColor: color, fillOpacity: 1
     }).addTo(dotsLayer);
     m.on('mouseover', e => showTooltip(e.originalEvent.pageX, e.originalEvent.pageY, tooltipText));
     m.on('mousemove', e => moveTooltip(e.originalEvent.pageX, e.originalEvent.pageY));
     m.on('mouseout',  hideTooltip);
   }
 
-  function addTrack(p0, p1, color, weight){
-    const latlngs=[worldToLatLng(p0),worldToLatLng(p1)];
-    L.polyline(latlngs,{color:darkerColor(color),weight:weight??5,opacity:0.9}).addTo(tracksLayer);
+  // Draw line with ARROW at the end to indicate movement direction
+  function addArrowLine(p0, p1, color){
+    const latlng0 = worldToLatLng(p0);
+    const latlng1 = worldToLatLng(p1);
+    const w = lineWeight();
+
+    // main segment
+    L.polyline([latlng0, latlng1], { color: darkerColor(color), weight: w, opacity: 0.95 })
+      .addTo(tracksLayer);
+
+    // arrow head (computed in pixel space for a clean small triangle)
+    const sPx = arrowPixelSize(); // size in pixels
+    const p0px = map.latLngToLayerPoint(latlng0);
+    const p1px = map.latLngToLayerPoint(latlng1);
+
+    const dx = p1px.x - p0px.x, dy = p1px.y - p0px.y;
+    const len = Math.hypot(dx, dy) || 1;
+    const ux = dx / len, uy = dy / len;          // unit direction
+    const px = -uy, py = ux;                     // unit perpendicular
+
+    // Triangle points in pixel space
+    const tip   = p1px;
+    const baseC = L.point(p1px.x - ux * sPx, p1px.y - uy * sPx);
+    const left  = L.point(baseC.x + px * (sPx * 0.55), baseC.y + py * (sPx * 0.55));
+    const right = L.point(baseC.x - px * (sPx * 0.55), baseC.y - py * (sPx * 0.55));
+
+    // Convert back to latlng
+    const triLL = [
+      map.layerPointToLatLng(tip),
+      map.layerPointToLatLng(left),
+      map.layerPointToLatLng(right)
+    ];
+
+    // Outline + fill for visibility
+    L.polygon(triLL, { color: '#fff', weight: Math.max(1, w * 0.9), fillColor: '#fff', fillOpacity: 1 })
+      .addTo(tracksLayer);
+    L.polygon(triLL, { color: darkerColor(color), weight: Math.max(1, w * 0.7), fillColor: darkerColor(color), fillOpacity: 1 })
+      .addTo(tracksLayer);
   }
 
-  // Kill "X" (with white outline)
+  // Kill "X" (with white outline) – unchanged
   function addKillX(center, color, weight){
     const arm = 40;
     const c = worldToLatLng(center);
@@ -419,7 +464,7 @@
     return L.layerGroup([a1w,a1,a2w,a2]);
   }
 
-  // 8-point burst (impact star) with outline
+  // 8-point burst (impact star) with outline – unchanged
   function addBurst(center, color, weight){
     const c = worldToLatLng(center);
     const rOuter = 50, rInner = rOuter*0.45, spikes=8;
@@ -434,7 +479,7 @@
     return group;
   }
 
-  // Role markers with position in tooltip
+  // Role markers with position in tooltip – unchanged
   function addDiamond(center, color, size, name){
     const c=worldToLatLng(center), r=size??40;
     const pts=[ L.latLng(c.lat - r, c.lng),
@@ -465,7 +510,7 @@
 
     const paths=gatherPlayersInRange();
 
-    // Tracks & dots
+    // Tracks (with arrowheads) & dots – smaller when zoomed out
     paths.forEach((positions,name)=>{
       if(!selectedPlayers.has(name))return;
       const color=playerColors.get(name)||'#ff0000';
@@ -473,12 +518,12 @@
 
       if(positions.length>1){
         for(let i=1;i<positions.length;i++){
-          addTrack(positions[i-1], positions[i], color, 6);
+          addArrowLine(positions[i-1], positions[i], color);
         }
       }
 
       for(const pos of positions){
-        addDot(pos, color, `${name}\n${pos.time}\nX:${pos.x.toFixed(1)} Z:${pos.z.toFixed(1)} Y:${pos.y.toFixed(1)}`, 7);
+        addDot(pos, color, `${name}\n${pos.time}\nX:${pos.x.toFixed(1)} Z:${pos.z.toFixed(1)} Y:${pos.y.toFixed(1)}`);
       }
     });
 
@@ -543,6 +588,9 @@
       }
     }
   }
+
+  // Re-render on zoom so dot sizes, line weights, and arrowheads stay appropriately small/big
+  map.on('zoomend', renderRange);
 
   // ----------------- Fit to data -----------------
   function fitToData(){
