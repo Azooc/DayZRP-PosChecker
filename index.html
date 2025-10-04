@@ -94,8 +94,6 @@
     zoomSnap: 0.25
   });
 
-  // If your tilePattern is RELATIVE in enoch.js, keep '.' prefix.
-  // If it's ABSOLUTE (starts with http), remove the dot.
   const tl = L.tileLayer('.' + mapInfos.tilePattern, {
     attribution: mapInfos.attribution,
     tileSize: mapInfos.tileSize,
@@ -137,7 +135,7 @@
   let selectedPlayers=new Set();
   let playerColors=new Map();
 
-  // Layers (instead of <svg> groups)
+  // Layers
   const tracksLayer      = L.layerGroup().addTo(map);
   const dotsLayer        = L.layerGroup().addTo(map);
   const killsLayer       = L.layerGroup().addTo(map);
@@ -183,19 +181,19 @@
   // ----------------- Size helpers (smaller at low zoom, grow gently) -----------------
   function dotRadius(){
     const z = map.getZoom();
-    const base = 2;                 // very small when zoomed out
+    const base = 2;
     const grow = (z - mapInfos.minZoom) * 0.6;
-    return Math.max(2, base + grow); // clamp minimum to 2px
+    return Math.max(2, base + grow);
   }
   function lineWeight(){
     const z = map.getZoom();
-    const base = 1;                  // thin when zoomed out
+    const base = 1;
     const grow = (z - mapInfos.minZoom) * 0.35;
-    return Math.max(1, base + grow); // clamp minimum to 1px
+    return Math.max(1, base + grow);
   }
   function arrowPixelSize(){
     const z = map.getZoom();
-    return Math.max(6, 4 + (z - mapInfos.minZoom) * 1.2); // arrow head size in pixels
+    return Math.max(6, 4 + (z - mapInfos.minZoom) * 1.2);
   }
 
   // ----------------- Parsing -----------------
@@ -402,33 +400,43 @@
     m.on('mouseout',  hideTooltip);
   }
 
-  // Draw line with ARROW at the end to indicate movement direction
+  // Line with arrow that DOES NOT run under the dots:
+  // We offset both the start and the end by the current dot radius (plus a tiny gap),
+  // and we build the arrowhead beyond the end offset.
   function addArrowLine(p0, p1, color){
-    const latlng0 = worldToLatLng(p0);
-    const latlng1 = worldToLatLng(p1);
+    const z0 = worldToLatLng(p0);
+    const z1 = worldToLatLng(p1);
     const w = lineWeight();
 
-    // main segment
-    L.polyline([latlng0, latlng1], { color: darkerColor(color), weight: w, opacity: 0.95 })
-      .addTo(tracksLayer);
-
-    // arrow head (computed in pixel space for a clean small triangle)
-    const sPx = arrowPixelSize(); // size in pixels
-    const p0px = map.latLngToLayerPoint(latlng0);
-    const p1px = map.latLngToLayerPoint(latlng1);
+    // Pixel-space math
+    const p0px = map.latLngToLayerPoint(z0);
+    const p1px = map.latLngToLayerPoint(z1);
 
     const dx = p1px.x - p0px.x, dy = p1px.y - p0px.y;
     const len = Math.hypot(dx, dy) || 1;
-    const ux = dx / len, uy = dy / len;          // unit direction
-    const px = -uy, py = ux;                     // unit perpendicular
+    const ux = dx / len, uy = dy / len; // unit direction
+    const px = -uy, py = ux;            // unit perpendicular
 
-    // Triangle points in pixel space
-    const tip   = p1px;
-    const baseC = L.point(p1px.x - ux * sPx, p1px.y - uy * sPx);
+    const r = dotRadius();
+    const gap = Math.max(2, r + 2);     // keep line away from the dot rim
+
+    // Offset segment endpoints to avoid drawing under dots
+    const startPx = L.point(p0px.x + ux * gap, p0px.y + uy * gap);
+    const endPx   = L.point(p1px.x - ux * gap, p1px.y - uy * gap);
+
+    // Draw main segment
+    L.polyline(
+      [ map.layerPointToLatLng(startPx), map.layerPointToLatLng(endPx) ],
+      { color: darkerColor(color), weight: w, opacity: 0.95 }
+    ).addTo(tracksLayer);
+
+    // Arrow head beyond the end of the shortened line
+    const sPx = arrowPixelSize();
+    const tip   = L.point(endPx.x + ux * sPx, endPx.y + uy * sPx); // tip sits past the end-offset
+    const baseC = endPx;                                           // base at the end-offset
     const left  = L.point(baseC.x + px * (sPx * 0.55), baseC.y + py * (sPx * 0.55));
     const right = L.point(baseC.x - px * (sPx * 0.55), baseC.y - py * (sPx * 0.55));
 
-    // Convert back to latlng
     const triLL = [
       map.layerPointToLatLng(tip),
       map.layerPointToLatLng(left),
@@ -438,11 +446,12 @@
     // Outline + fill for visibility
     L.polygon(triLL, { color: '#fff', weight: Math.max(1, w * 0.9), fillColor: '#fff', fillOpacity: 1 })
       .addTo(tracksLayer);
-    L.polygon(triLL, { color: darkerColor(color), weight: Math.max(1, w * 0.7), fillColor: darkerColor(color), fillOpacity: 1 })
+    const headColor = darkerColor(color);
+    L.polygon(triLL, { color: headColor, weight: Math.max(1, w * 0.7), fillColor: headColor, fillOpacity: 1 })
       .addTo(tracksLayer);
   }
 
-  // Kill "X" (with white outline) – unchanged
+  // Kill "X" (with white outline)
   function addKillX(center, color, weight){
     const arm = 40;
     const c = worldToLatLng(center);
@@ -464,7 +473,7 @@
     return L.layerGroup([a1w,a1,a2w,a2]);
   }
 
-  // 8-point burst (impact star) with outline – unchanged
+  // 8-point burst (impact star) with outline
   function addBurst(center, color, weight){
     const c = worldToLatLng(center);
     const rOuter = 50, rInner = rOuter*0.45, spikes=8;
@@ -479,7 +488,7 @@
     return group;
   }
 
-  // Role markers with position in tooltip – unchanged
+  // Role markers with position in tooltip
   function addDiamond(center, color, size, name){
     const c=worldToLatLng(center), r=size??40;
     const pts=[ L.latLng(c.lat - r, c.lng),
@@ -510,7 +519,7 @@
 
     const paths=gatherPlayersInRange();
 
-    // Tracks (with arrowheads) & dots – smaller when zoomed out
+    // Tracks (arrowed, offset from dots) & dots
     paths.forEach((positions,name)=>{
       if(!selectedPlayers.has(name))return;
       const color=playerColors.get(name)||'#ff0000';
@@ -589,7 +598,7 @@
     }
   }
 
-  // Re-render on zoom so dot sizes, line weights, and arrowheads stay appropriately small/big
+  // Re-render on zoom so sizes and offsets adjust correctly
   map.on('zoomend', renderRange);
 
   // ----------------- Fit to data -----------------
