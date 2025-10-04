@@ -5,11 +5,11 @@
 <meta name="viewport" content="width=device-width,initial-scale=1" />
 <title>ADM Map Viewer (Leaflet Enoch)</title>
 
-<!-- Leaflet -->
+<!-- Leaflet 1.6.0 (same as your working example) -->
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.6.0/dist/leaflet.css" />
 <script src="https://unpkg.com/leaflet@1.6.0/dist/leaflet.js"></script>
 
-<!-- jQuery (mapUtils uses it in some controls) -->
+<!-- jQuery (used by mapUtils controls) -->
 <script src="https://unpkg.com/jquery@3.5.1/dist/jquery.min.js"></script>
 
 <!-- Teammate utilities + Enoch map definition -->
@@ -30,7 +30,6 @@
   .panel{background:var(--panel);padding:12px;border-radius:10px;border:1px solid rgba(255,255,255,0.03);margin-bottom:10px}
   .checkbox{display:inline-flex;gap:8px;align-items:center}
 
-  /* Map container takes remaining height */
   .viewport{position:relative;height:75vh;min-height:420px;border-radius:12px;border:1px solid rgba(255,255,255,0.06);overflow:hidden;background:#000}
   #map{width:100%;height:100%}
 
@@ -79,34 +78,45 @@
 
 <script>
 (() => {
-  // ----------------- Map boot -----------------
-  // Enoch map info from maps/enoch.js (depends on mapUtils.js' Arma3Map scaffolding)
+  // ---------- Map boot ----------
   const mapInfos = Arma3Map?.Maps?.enoch;
   if (!mapInfos) {
     alert('maps/enoch.js not loaded or Arma3Map.Maps.enoch missing.');
     return;
   }
 
-  // Build Leaflet map using Enoch settings
+  // Allow deeper zoom than native tiles (over-zoom)
+  const EXTRA_ZOOM = 4; // adjust if you want more/less over-zoom
+
+  // Gentler zoom without newer APIs:
+  // - smaller zoomDelta & zoomSnap make all zoom steps finer
+  // (in Leaflet 1.6, wheel speed is fixed, but smaller delta reduces jump size)
   const map = L.map('map', {
     minZoom: mapInfos.minZoom,
-    maxZoom: mapInfos.maxZoom,
-    crs: mapInfos.CRS
+    maxZoom: mapInfos.maxZoom + EXTRA_ZOOM,
+    crs: mapInfos.CRS,
+    zoomDelta: 0.25,
+    zoomSnap: 0.25
   });
 
-  L.tileLayer('.' + mapInfos.tilePattern, {
+  // IMPORTANT: Use the exact pattern from enoch.js (this matched your working setup)
+  L.tileLayer(mapInfos.tilePattern, {
     attribution: mapInfos.attribution,
-    tileSize: mapInfos.tileSize
+    tileSize: mapInfos.tileSize,
+    // Over-zoom config: tell Leaflet what the native max is
+    // (it will upscale beyond this)
+    maxNativeZoom: mapInfos.maxZoom,
+    maxZoom: mapInfos.maxZoom + EXTRA_ZOOM
   }).addTo(map);
 
   map.setView(mapInfos.center, mapInfos.defaultZoom);
 
-  // Optional helpers from mapUtils.js
+  // Helpful overlays from mapUtils.js
   L.latlngGraticule().addTo(map);
   L.control.scale({ maxWidth: 200, imperial: false }).addTo(map);
   L.control.gridMousePosition().addTo(map);
 
-  // ----------------- UI refs -----------------
+  // ---------- UI refs ----------
   const fileInput=document.getElementById('fileInput');
   const startTimeSel=document.getElementById('startTime');
   const endTimeSel=document.getElementById('endTime');
@@ -118,10 +128,10 @@
   const damageToggle=document.getElementById('damageToggle');
   const fitBtn=document.getElementById('fitBtn');
 
-  // ----------------- State -----------------
-  const WORLD=12800; // game world size (used in your ADM)
+  // ---------- State ----------
+  const WORLD=12800;
   const timeToSec = t => { const [H,M,S]=t.split(':').map(n=>+n); return (H*3600+M*60+S)|0; };
-  const worldToLatLng = p => L.latLng(p.z, p.x); // lat=z, lng=x in this CRS
+  const worldToLatLng = p => L.latLng(p.z, p.x); // lat=z, lng=x
 
   let snapshots=new Map(),orderedTimestamps=[];
   let killEvents=[];       // PvP kills
@@ -133,7 +143,7 @@
   let selectedPlayers=new Set();
   let playerColors=new Map();
 
-  // Layers (instead of <svg> groups)
+  // Layers
   const tracksLayer      = L.layerGroup().addTo(map);
   const dotsLayer        = L.layerGroup().addTo(map);
   const killsLayer       = L.layerGroup().addTo(map);
@@ -148,21 +158,20 @@
     highlightsLayer.clearLayers();
   }
 
-  // ----------------- Tooltip helpers -----------------
+  // ---------- Tooltip helpers ----------
   function showTooltip(x,y,text){ tooltip.style.display='block'; tooltip.textContent=text; moveTooltip(x,y); }
   function moveTooltip(x,y){ tooltip.style.left=(x+12)+'px'; tooltip.style.top=(y+12)+'px'; }
   function hideTooltip(){ tooltip.style.display='none'; }
 
-  // ----------------- Colors -----------------
+  // ---------- Colors ----------
   function darkerColor(hex){
-    // quick n dirty: draw and read pixel
     const c=document.createElement("canvas").getContext("2d");
     c.fillStyle=hex;c.fillRect(0,0,1,1);
     const [r,g,b]=c.getImageData(0,0,1,1).data;
     return `rgb(${r*0.6},${g*0.6},${b*0.6})`;
   }
 
-  // ----------------- Regex (positions / kills / damage) -----------------
+  // ---------- Regex ----------
   const posRe=/^(?<time>\d{2}:\d{2}:\d{2})\s*\|\s*Player\s+"(?<name>.+?)"\s*\(id=(?<id>\d+)\s+pos=<\s*(?<x>[-+\d.]+)\s*,\s*(?<z>[-+\d.]+)\s*,\s*(?<y>[-+\d.]+)\s*>\)\s*$/i;
 
   const killRe=/^(?<time>\d{2}:\d{2}:\d{2})\s*\|\s*Player\s+"(?<victim>.+?)"\s*\(DEAD\)\s*\(id=(?<vid>\d+)\s+pos=<\s*(?<vx>[-+\d.]+)\s*,\s*(?<vz>[-+\d.]+)\s*,\s*(?<vy>[-+\d.]+)\s*>\)\s*killed by\s*Player\s+"(?<killer>.+?)"\s*\(id=(?<kid>\d+)\s+pos=<\s*(?<kx>[-+\d.]+)\s*,\s*(?<kz>[-+\d.]+)\s*,\s*(?<ky>[-+\d.]+)\s*>\)\s*with\s*(?<weapon>.+?)\s*from\s*(?<dist>[-+\d.]+)\s*meters\s*$/i;
@@ -171,15 +180,13 @@
 
   const suicideRe=/^(?<time>\d{2}:\d{2}:\d{2})\s*\|\s*Player\s+"(?<victim>.+?)"\s*\(id=(?<vid>\d+)\s+pos=<\s*(?<vx>[-+\d.]+)\s*,\s*(?<vz>[-+\d.]+)\s*,\s*(?<vy>[-+\d.]+)\s*>\)\s*committed suicide\s*$/i;
 
-  // PvP damage — optional (DEAD), optional [HP], optional distance
   const dmgPvpRe =
   /^(?<time>\d{2}:\d{2}:\d{2})\s*\|\s*Player\s+"(?<victim>.+?)"\s*(?:\(DEAD\)\s*)?\(id=(?<vid>\d+)\s+pos=<\s*(?<vx>[-+\d.]+)\s*,\s*(?<vz>[-+\d.]+)\s*,\s*(?<vy>[-+\d.]+)\s*>\)\s*(?:\[\s*HP:\s*(?<hp>[-+\d.]+)\s*\]\s*)?hit by\s*Player\s+"(?<attacker>.+?)"\s*\(id=(?<aid>\d+)\s+pos=<\s*(?<ax>[-+\d.]+)\s*,\s*(?<az>[-+\d.]+)\s*,\s*(?<ay>[-+\d.]+)\s*>\)\s*into\s*(?<part>[A-Za-z]+)\(\d+\)\s*for\s*(?<dmg>[-+\d.]+)\s*damage\s*\((?<attack>[^)]+)\)\s*with\s*(?<weapon>.+?)(?:\s*from\s*(?<dist>[-+\d.]+)\s*meters)?\s*$/i;
 
-  // AI/animal → player damage — optional [HP], optional distance
   const dmgAiRe =
   /^(?<time>\d{2}:\d{2}:\d{2})\s*\|\s*Player\s+"(?<victim>.+?)"\s*\(id=(?<vid>\d+)\s+pos=<\s*(?<vx>[-+\d.]+)\s*,\s*(?<vz>[-+\d.]+)\s*,\s*(?<vy>[-+\d.]+)\s*>\)\s*(?:\[\s*HP:\s*(?<hp>[-+\d.]+)\s*\]\s*)?hit by\s*(?<ai>.+?)\s*into\s*(?<part>[A-Za-z]+)\(\d+\)\s*for\s*(?<dmg>[-+\d.]+)\s*damage\s*\((?<attack>[^)]+)\)(?:\s*from\s*(?<dist>[-+\d.]+)\s*meters)?\s*$/i;
 
-  // ----------------- Parsing -----------------
+  // ---------- Parsing ----------
   function parseADM(text){
     snapshots.clear(); orderedTimestamps=[]; killEvents=[]; aiDeaths=[]; suicides=[]; dmgPvpEvents=[]; dmgAiEvents=[];
     for(const raw of text.split(/\r?\n/)){
@@ -223,7 +230,6 @@
         });
         continue;
       }
-      // Damage PvP
       m=raw.match(dmgPvpRe);
       if(m){
         const g=m.groups;
@@ -240,7 +246,6 @@
         });
         continue;
       }
-      // Damage AI/animal
       m=raw.match(dmgAiRe);
       if(m){
         const g=m.groups;
@@ -371,10 +376,45 @@
     }
   }
 
-  // ----------------- Leaflet drawing helpers -----------------
+  // ---------- Zoom-scaled styling + arrows ----------
+  function strokeForZoom() {
+    const z = map.getZoom();
+    // slim lines, scale gently
+    return Math.max(1.25, 0.8 + 0.35 * (z - mapInfos.minZoom));
+  }
+
+  function arrowSizeForZoom() {
+    const z = map.getZoom();
+    // world units
+    return 28 + 5 * (z - mapInfos.minZoom);
+  }
+
+  function addArrowhead(p0, p1, color) {
+    const dx = p1.x - p0.x;
+    const dy = p1.z - p0.z;
+    const len = Math.hypot(dx, dy) || 1;
+    const ux = dx / len, uy = dy / len;
+
+    const Lw = arrowSizeForZoom();
+    const Bw = Lw * 0.55;
+    const bx = p1.x - ux * Lw;
+    const by = p1.z - uy * Lw;
+    const px = -uy, py = ux;
+
+    const left  = { x: bx + px * Bw, z: by + py * Bw };
+    const right = { x: bx - px * Bw, z: by - py * Bw };
+
+    return L.polygon([
+      worldToLatLng(left),
+      worldToLatLng(p1),
+      worldToLatLng(right)
+    ], { color: '#fff', weight: 2, fillColor: color, fillOpacity: 1 });
+  }
+
+  // ---------- Leaflet drawing helpers ----------
   function addDot(pos, color, tooltipText, radius){
     const latlng = worldToLatLng(pos);
-    const r = radius ?? 7;
+    const r = radius ?? 6;
     const m = L.circleMarker(latlng, {
       radius: r, color: '#fff', weight: 2, fillColor: color, fillOpacity: 1
     }).addTo(dotsLayer);
@@ -383,34 +423,38 @@
     m.on('mouseout',  hideTooltip);
   }
 
-  function addTrack(p0, p1, color, weight){
-    const latlngs=[worldToLatLng(p0),worldToLatLng(p1)];
-    L.polyline(latlngs,{color:darkerColor(color),weight:weight??5,opacity:0.9}).addTo(tracksLayer);
+  function addTrack(p0, p1, color){
+    const w = strokeForZoom();
+    // segment
+    L.polyline([worldToLatLng(p0), worldToLatLng(p1)], {
+      color: darkerColor(color), weight: w, opacity: 0.9
+    }).addTo(tracksLayer);
+    // arrowhead at end
+    addArrowhead(p0, p1, color).addTo(tracksLayer);
   }
 
-  // Kill "X" (with white outline)
   function addKillX(center, color, weight){
     const arm = 40;
     const c = worldToLatLng(center);
+    const w = (weight ?? 5);
 
     const a1w = L.polyline([
       L.latLng(c.lat - arm, c.lng - arm), L.latLng(c.lat + arm, c.lng + arm)
-    ], { color:'#fff', weight:(weight??6)*1.6 }).addTo(killsLayer);
+    ], { color:'#fff', weight:w*1.6 }).addTo(killsLayer);
     const a1  = L.polyline([
       L.latLng(c.lat - arm, c.lng - arm), L.latLng(c.lat + arm, c.lng + arm)
-    ], { color,       weight:(weight??6) }).addTo(killsLayer);
+    ], { color,       weight:w }).addTo(killsLayer);
 
     const a2w = L.polyline([
       L.latLng(c.lat + arm, c.lng - arm), L.latLng(c.lat - arm, c.lng + arm)
-    ], { color:'#fff', weight:(weight??6)*1.6 }).addTo(killsLayer);
+    ], { color:'#fff', weight:w*1.6 }).addTo(killsLayer);
     const a2  = L.polyline([
       L.latLng(c.lat + arm, c.lng - arm), L.latLng(c.lat - arm, c.lng + arm)
-    ], { color,       weight:(weight??6) }).addTo(killsLayer);
+    ], { color,       weight:w }).addTo(killsLayer);
 
     return L.layerGroup([a1w,a1,a2w,a2]);
   }
 
-  // 8-point burst (impact star) with outline
   function addBurst(center, color, weight){
     const c = worldToLatLng(center);
     const rOuter = 50, rInner = rOuter*0.45, spikes=8;
@@ -419,13 +463,12 @@
       const dx=Math.cos(ang)*rr, dy=Math.sin(ang)*rr;
       pts.push(L.latLng(c.lat + dy, c.lng + dx));
     }
-    const outline=L.polygon(pts,{color:'#000',weight:(weight??6)*1.6,fillColor:'#000',fillOpacity:1});
-    const body   =L.polygon(pts,{color:'#fff',weight:(weight??6)*1.1,fillColor:color, fillOpacity:1});
+    const outline=L.polygon(pts,{color:'#000',weight:(weight??5)*1.6,fillColor:'#000',fillOpacity:1});
+    const body   =L.polygon(pts,{color:'#fff',weight:(weight??5)*1.1,fillColor:color, fillOpacity:1});
     const group=L.layerGroup([outline,body]).addTo(damageLayer);
     return group;
   }
 
-  // Role markers with position in tooltip
   function addDiamond(center, color, size, name){
     const c=worldToLatLng(center), r=size??40;
     const pts=[ L.latLng(c.lat - r, c.lng),
@@ -450,7 +493,7 @@
     poly.on('mouseout', hideTooltip);
   }
 
-  // ----------------- Render -----------------
+  // ---------- Render ----------
   function renderRange(){
     clearAllLayers(); hideTooltip();
 
@@ -464,12 +507,12 @@
 
       if(positions.length>1){
         for(let i=1;i<positions.length;i++){
-          addTrack(positions[i-1], positions[i], color, 6);
+          addTrack(positions[i-1], positions[i], color);
         }
       }
 
       for(const pos of positions){
-        addDot(pos, color, `${name}\n${pos.time}\nX:${pos.x.toFixed(1)} Z:${pos.z.toFixed(1)} Y:${pos.y.toFixed(1)}`, 7);
+        addDot(pos, color, `${name}\n${pos.time}\nX:${pos.x.toFixed(1)} Z:${pos.z.toFixed(1)} Y:${pos.y.toFixed(1)}`, 6);
       }
     });
 
@@ -477,7 +520,7 @@
     if(killToggle.checked){
       for(const k of killsInRangeFiltered()){
         const color=playerColors.get(k.victimName)||'#ff0000';
-        const g=addKillX(k.victim, color, 6);
+        const g=addKillX(k.victim, color, 5);
         g.addTo(killsLayer);
         const tip=`${k.victimName} killed by ${k.killerName}\nwith ${k.weapon} from ${k.distance.toFixed(2)} m\n${k.time}`;
         g.on('mouseover', e=>showTooltip(e.originalEvent.pageX,e.originalEvent.pageY,tip));
@@ -491,14 +534,14 @@
       }
       for(const k of aiInRangeFiltered()){
         const color=playerColors.get(k.victimName)||'#ff0000';
-        const g=addKillX(k.victim, color, 6).addTo(killsLayer);
+        const g=addKillX(k.victim, color, 5).addTo(killsLayer);
         g.on('mouseover', e=>showTooltip(e.originalEvent.pageX,e.originalEvent.pageY,`${k.victimName} killed by AI ${k.ai}\n${k.time}`));
         g.on('mousemove', e=>moveTooltip(e.originalEvent.pageX,e.originalEvent.pageY));
         g.on('mouseout', hideTooltip);
       }
       for(const s of suicidesInRangeFiltered()){
         const color=playerColors.get(s.victimName)||'#ff0000';
-        const g=addKillX(s.victim, color, 6).addTo(killsLayer);
+        const g=addKillX(s.victim, color, 5).addTo(killsLayer);
         g.on('mouseover', e=>showTooltip(e.originalEvent.pageX,e.originalEvent.pageY,`${s.victimName} committed suicide\n${s.time}`));
         g.on('mousemove', e=>moveTooltip(e.originalEvent.pageX,e.originalEvent.pageY));
         g.on('mouseout', hideTooltip);
@@ -512,7 +555,7 @@
         const hpText   = (ev.hp??ev.hp===0) ? `\nHP: ${ev.hp.toFixed(2)}` : '';
         const distText = (ev.distance??ev.distance===0) ? `\nDist: ${ev.distance.toFixed(2)} m` : '';
         const tip = `${ev.victimName} hit by ${ev.attackerName}\n${ev.part} for ${ev.damage} dmg\n${ev.attack} with ${ev.weapon}${distText}${hpText}\n${ev.time}`;
-        const g=addBurst(ev.victim, color, 6);
+        const g=addBurst(ev.victim, color, 5);
         g.on('mouseover', e=>showTooltip(e.originalEvent.pageX,e.originalEvent.pageY,tip));
         g.on('mousemove', e=>moveTooltip(e.originalEvent.pageX,e.originalEvent.pageY));
         g.on('mouseout', hideTooltip);
@@ -527,7 +570,7 @@
         const hpText   = (ev.hp??ev.hp===0) ? `\nHP: ${ev.hp.toFixed(2)}` : '';
         const distText = (ev.distance??ev.distance===0) ? `\nDist: ${ev.distance.toFixed(2)} m` : '';
         const tip = `${ev.victimName} hit by ${ev.ai}\n${ev.part} for ${ev.damage} dmg\n${ev.attack}${distText}${hpText}\n${ev.time}`;
-        const g=addBurst(ev.victim, color, 6);
+        const g=addBurst(ev.victim, color, 5);
         g.on('mouseover', e=>showTooltip(e.originalEvent.pageX,e.originalEvent.pageY,tip));
         g.on('mousemove', e=>moveTooltip(e.originalEvent.pageX,e.originalEvent.pageY));
         g.on('mouseout', hideTooltip);
@@ -535,7 +578,7 @@
     }
   }
 
-  // ----------------- Fit to data -----------------
+  // ---------- Fit to data ----------
   function fitToData(){
     const latlngs=[];
     const paths=gatherPlayersInRange();
@@ -548,7 +591,10 @@
     }
   }
 
-  // ----------------- UI wiring -----------------
+  // ---------- Re-render on interactions ----------
+  map.on('zoomend', renderRange); // keep line thickness/arrow size in sync with zoom
+
+  // ---------- UI wiring ----------
   startTimeSel.addEventListener('change',()=>{populatePlayerListForRange();renderRange();});
   endTimeSel.addEventListener('change',()=>{populatePlayerListForRange();renderRange();});
   killToggle.addEventListener('change',()=>{renderRange();});
