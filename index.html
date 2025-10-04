@@ -5,9 +5,9 @@
 <meta name="viewport" content="width=device-width,initial-scale=1" />
 <title>ADM Map Viewer (Leaflet Enoch)</title>
 
-<!-- Leaflet 1.9.x for better wheel control -->
-<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<!-- Leaflet 1.6.0 (same as your working example) -->
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.6.0/dist/leaflet.css" />
+<script src="https://unpkg.com/leaflet@1.6.0/dist/leaflet.js"></script>
 
 <!-- jQuery (used by mapUtils controls) -->
 <script src="https://unpkg.com/jquery@3.5.1/dist/jquery.min.js"></script>
@@ -85,26 +85,26 @@
     return;
   }
 
-  // allow deeper zoom than native tiles (over-zoom)
-  const EXTRA_ZOOM = 4; // try 3–5 to taste
+  // Allow deeper zoom than native tiles (over-zoom)
+  const EXTRA_ZOOM = 4; // adjust if you want more/less over-zoom
 
-  // gentler wheel zoom (1.9.x option): higher px per zoom level = slower zoom
-  const WHEEL_PX_PER_ZOOM = 180;   // default ~60; 180 = 3x gentler
-  const ZOOM_SNAP = 0.25;          // fractional zoom steps
-  const ZOOM_DELTA = 0.25;
-
+  // Gentler zoom without newer APIs:
+  // - smaller zoomDelta & zoomSnap make all zoom steps finer
+  // (in Leaflet 1.6, wheel speed is fixed, but smaller delta reduces jump size)
   const map = L.map('map', {
     minZoom: mapInfos.minZoom,
     maxZoom: mapInfos.maxZoom + EXTRA_ZOOM,
     crs: mapInfos.CRS,
-    wheelPxPerZoomLevel: WHEEL_PX_PER_ZOOM,
-    zoomSnap: ZOOM_SNAP,
-    zoomDelta: ZOOM_DELTA
+    zoomDelta: 0.25,
+    zoomSnap: 0.25
   });
 
+  // IMPORTANT: Use the exact pattern from enoch.js (this matched your working setup)
   L.tileLayer(mapInfos.tilePattern, {
     attribution: mapInfos.attribution,
     tileSize: mapInfos.tileSize,
+    // Over-zoom config: tell Leaflet what the native max is
+    // (it will upscale beyond this)
     maxNativeZoom: mapInfos.maxZoom,
     maxZoom: mapInfos.maxZoom + EXTRA_ZOOM
   }).addTo(map);
@@ -379,18 +379,17 @@
   // ---------- Zoom-scaled styling + arrows ----------
   function strokeForZoom() {
     const z = map.getZoom();
-    // nice and thin; scales gently with zoom
-    return Math.max(1.5, 0.9 + 0.4 * (z - mapInfos.minZoom));
+    // slim lines, scale gently
+    return Math.max(1.25, 0.8 + 0.35 * (z - mapInfos.minZoom));
   }
 
   function arrowSizeForZoom() {
     const z = map.getZoom();
-    // world units (since CRS uses game units)
-    return 30 + 6 * (z - mapInfos.minZoom);
+    // world units
+    return 28 + 5 * (z - mapInfos.minZoom);
   }
 
   function addArrowhead(p0, p1, color) {
-    const tip = worldToLatLng(p1);
     const dx = p1.x - p0.x;
     const dy = p1.z - p0.z;
     const len = Math.hypot(dx, dy) || 1;
@@ -437,7 +436,7 @@
   function addKillX(center, color, weight){
     const arm = 40;
     const c = worldToLatLng(center);
-    const w = (weight ?? 6);
+    const w = (weight ?? 5);
 
     const a1w = L.polyline([
       L.latLng(c.lat - arm, c.lng - arm), L.latLng(c.lat + arm, c.lng + arm)
@@ -464,8 +463,8 @@
       const dx=Math.cos(ang)*rr, dy=Math.sin(ang)*rr;
       pts.push(L.latLng(c.lat + dy, c.lng + dx));
     }
-    const outline=L.polygon(pts,{color:'#000',weight:(weight??6)*1.6,fillColor:'#000',fillOpacity:1});
-    const body   =L.polygon(pts,{color:'#fff',weight:(weight??6)*1.1,fillColor:color, fillOpacity:1});
+    const outline=L.polygon(pts,{color:'#000',weight:(weight??5)*1.6,fillColor:'#000',fillOpacity:1});
+    const body   =L.polygon(pts,{color:'#fff',weight:(weight??5)*1.1,fillColor:color, fillOpacity:1});
     const group=L.layerGroup([outline,body]).addTo(damageLayer);
     return group;
   }
