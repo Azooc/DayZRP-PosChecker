@@ -5,14 +5,14 @@
 <meta name="viewport" content="width=device-width,initial-scale=1" />
 <title>ADM Map Viewer (Leaflet Enoch)</title>
 
-<!-- Leaflet -->
+<!-- Leaflet (same version you had working) -->
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.6.0/dist/leaflet.css" />
 <script src="https://unpkg.com/leaflet@1.6.0/dist/leaflet.js"></script>
 
-<!-- jQuery (mapUtils uses it in some controls) -->
+<!-- jQuery (mapUtils uses it) -->
 <script src="https://unpkg.com/jquery@3.5.1/dist/jquery.min.js"></script>
 
-<!-- Teammate utilities + Enoch map definition -->
+<!-- Utilities + Enoch CRS/metadata -->
 <link rel="stylesheet" href="css/mapUtils.css" />
 <script src="js/mapUtils.js"></script>
 <script src="maps/enoch.js"></script>
@@ -30,7 +30,6 @@
   .panel{background:var(--panel);padding:12px;border-radius:10px;border:1px solid rgba(255,255,255,0.03);margin-bottom:10px}
   .checkbox{display:inline-flex;gap:8px;align-items:center}
 
-  /* Map container takes remaining height */
   .viewport{position:relative;height:75vh;min-height:420px;border-radius:12px;border:1px solid rgba(255,255,255,0.06);overflow:hidden;background:#000}
   #map{width:100%;height:100%}
 
@@ -80,35 +79,38 @@
 <script>
 (() => {
   // ----------------- Map boot -----------------
-  // Enoch map info from maps/enoch.js (depends on mapUtils.js' Arma3Map scaffolding)
   const mapInfos = Arma3Map?.Maps?.enoch;
   if (!mapInfos) {
     alert('maps/enoch.js not loaded or Arma3Map.Maps.enoch missing.');
     return;
   }
 
-  // Allow deeper zoom than native tiles (over-zoom)
+  // Over-zoom beyond native tiles
   const EXTRA_ZOOM = 4; // tweak 3–6 to taste
 
-  // Build Leaflet map using Enoch settings
   const map = L.map('map', {
     minZoom: mapInfos.minZoom,
-    maxZoom: mapInfos.maxZoom + EXTRA_ZOOM,   // allow over-zoom beyond native
+    maxZoom: mapInfos.maxZoom + EXTRA_ZOOM,
     crs: mapInfos.CRS,
-    zoomDelta: 0.25,  // gentler step size (keeps your older Leaflet)
+    zoomDelta: 0.25,
     zoomSnap: 0.25
   });
 
-  L.tileLayer('.' + mapInfos.tilePattern, {
+  // Use your friend's hosted Livonia tiles (XYZ)
+  const TILE_URL = 'https://www.dayzrp.com/images/map/livonia/{z}/{x}/{y}.webp';
+
+  L.tileLayer(TILE_URL, {
     attribution: mapInfos.attribution,
     tileSize: mapInfos.tileSize,
-    maxNativeZoom: mapInfos.maxZoom,          // tiles exist up to this level
-    maxZoom: mapInfos.maxZoom + EXTRA_ZOOM    // upscale past native level
+    maxNativeZoom: mapInfos.maxZoom,      // real highest zoom on the server
+    maxZoom: mapInfos.maxZoom + EXTRA_ZOOM,
+    crossOrigin: true,
+    detectRetina: false
   }).addTo(map);
 
   map.setView(mapInfos.center, mapInfos.defaultZoom);
 
-  // Optional helpers from mapUtils.js
+  // Optional helpers
   L.latlngGraticule().addTo(map);
   L.control.scale({ maxWidth: 200, imperial: false }).addTo(map);
   L.control.gridMousePosition().addTo(map);
@@ -126,7 +128,6 @@
   const fitBtn=document.getElementById('fitBtn');
 
   // ----------------- State -----------------
-  const WORLD=12800; // game world size (used in your ADM)
   const timeToSec = t => { const [H,M,S]=t.split(':').map(n=>+n); return (H*3600+M*60+S)|0; };
   const worldToLatLng = p => L.latLng(p.z, p.x); // lat=z, lng=x in this CRS
 
@@ -140,7 +141,7 @@
   let selectedPlayers=new Set();
   let playerColors=new Map();
 
-  // Layers (instead of <svg> groups)
+  // Layers
   const tracksLayer      = L.layerGroup().addTo(map);
   const dotsLayer        = L.layerGroup().addTo(map);
   const killsLayer       = L.layerGroup().addTo(map);
@@ -162,7 +163,6 @@
 
   // ----------------- Colors -----------------
   function darkerColor(hex){
-    // quick n dirty: draw and read pixel
     const c=document.createElement("canvas").getContext("2d");
     c.fillStyle=hex;c.fillRect(0,0,1,1);
     const [r,g,b]=c.getImageData(0,0,1,1).data;
@@ -178,11 +178,9 @@
 
   const suicideRe=/^(?<time>\d{2}:\d{2}:\d{2})\s*\|\s*Player\s+"(?<victim>.+?)"\s*\(id=(?<vid>\d+)\s+pos=<\s*(?<vx>[-+\d.]+)\s*,\s*(?<vz>[-+\d.]+)\s*,\s*(?<vy>[-+\d.]+)\s*>\)\s*committed suicide\s*$/i;
 
-  // PvP damage — optional (DEAD), optional [HP], optional distance
   const dmgPvpRe =
   /^(?<time>\d{2}:\d{2}:\d{2})\s*\|\s*Player\s+"(?<victim>.+?)"\s*(?:\(DEAD\)\s*)?\(id=(?<vid>\d+)\s+pos=<\s*(?<vx>[-+\d.]+)\s*,\s*(?<vz>[-+\d.]+)\s*,\s*(?<vy>[-+\d.]+)\s*>\)\s*(?:\[\s*HP:\s*(?<hp>[-+\d.]+)\s*\]\s*)?hit by\s*Player\s+"(?<attacker>.+?)"\s*\(id=(?<aid>\d+)\s+pos=<\s*(?<ax>[-+\d.]+)\s*,\s*(?<az>[-+\d.]+)\s*,\s*(?<ay>[-+\d.]+)\s*>\)\s*into\s*(?<part>[A-Za-z]+)\(\d+\)\s*for\s*(?<dmg>[-+\d.]+)\s*damage\s*\((?<attack>[^)]+)\)\s*with\s*(?<weapon>.+?)(?:\s*from\s*(?<dist>[-+\d.]+)\s*meters)?\s*$/i;
 
-  // AI/animal → player damage — optional [HP], optional distance
   const dmgAiRe =
   /^(?<time>\d{2}:\d{2}:\d{2})\s*\|\s*Player\s+"(?<victim>.+?)"\s*\(id=(?<vid>\d+)\s+pos=<\s*(?<vx>[-+\d.]+)\s*,\s*(?<vz>[-+\d.]+)\s*,\s*(?<vy>[-+\d.]+)\s*>\)\s*(?:\[\s*HP:\s*(?<hp>[-+\d.]+)\s*\]\s*)?hit by\s*(?<ai>.+?)\s*into\s*(?<part>[A-Za-z]+)\(\d+\)\s*for\s*(?<dmg>[-+\d.]+)\s*damage\s*\((?<attack>[^)]+)\)(?:\s*from\s*(?<dist>[-+\d.]+)\s*meters)?\s*$/i;
 
@@ -546,7 +544,7 @@
   function fitToData(){
     const latlngs=[];
     const paths=gatherPlayersInRange();
-    for(const [name,positions] of paths){
+    for(const [,positions] of paths){
       for(const p of positions) latlngs.push(worldToLatLng(p));
     }
     if(latlngs.length){
