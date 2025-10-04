@@ -3,22 +3,9 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>ADM Map Viewer (Leaflet Enoch – fixed max-detail tiles)</title>
-
-<!-- Leaflet -->
-<link rel="stylesheet" href="https://unpkg.com/leaflet@1.6.0/dist/leaflet.css" />
-<script src="https://unpkg.com/leaflet@1.6.0/dist/leaflet.js"></script>
-
-<!-- jQuery (mapUtils uses it in some controls) -->
-<script src="https://unpkg.com/jquery@3.5.1/dist/jquery.min.js"></script>
-
-<!-- Utilities + Enoch map definition (your existing files) -->
-<link rel="stylesheet" href="css/mapUtils.css" />
-<script src="js/mapUtils.js"></script>
-<script src="maps/enoch.js"></script>
-
+<title>ADM Map Viewer</title>
 <style>
-  :root{--bg:#0f1720;--panel:#0b1220;--muted:#9aa4b2}
+  :root{--bg:#0f1720;--panel:#0b1220;--muted:#9aa4b2;--accent:#7dd3fc}
   html,body{height:100%;margin:0;font-family:Inter,ui-sans-serif,system-ui,Segoe UI,Roboto,"Helvetica Neue",Arial}
   body{background:linear-gradient(180deg,#071021 0%,var(--bg) 100%);color:#e6eef6;display:flex;flex-direction:column;align-items:center;padding:20px}
   .wrap{width:min(1200px,95%)}
@@ -27,31 +14,45 @@
   .controls{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
   input[type=file]{display:none}
   .btn{background:transparent;border:1px solid rgba(255,255,255,0.06);padding:8px 12px;border-radius:8px;cursor:pointer;color:inherit}
-  .panel{background:var(--panel);padding:12px;border-radius:10px;border:1px solid rgba(255,255,255,0.03);margin-bottom:10px}
-  .checkbox{display:inline-flex;gap:8px;align-items:center}
 
-  .viewport{position:relative;height:75vh;min-height:420px;border-radius:12px;border:1px solid rgba(255,255,255,0.06);overflow:hidden;background:#000}
-  #map{width:100%;height:100%}
+  .panel{background:var(--panel);padding:12px;border-radius:10px;border:1px solid rgba(255,255,255,0.03);margin-bottom:10px}
+
+  .viewport{position:relative;height:75vh;min-height:420px;border-radius:12px;border:1px solid rgba(255,255,255,0.06);overflow:hidden;background:#000;user-select:none;touch-action:none}
+  .stage{position:absolute;left:0;top:0;transform-origin:0 0}
+  .stage img{display:block}
+  .overlay{position:absolute;left:0;top:0;width:100%;height:100%}
 
   #playerControls{display:flex;gap:12px;margin:10px 0;align-items:center}
   #playerList{max-height:180px;overflow:auto;font-size:0.9rem;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px}
   #playerList label{display:flex;gap:8px;align-items:center}
   .colorInput{width:20px;height:20px;padding:0;border:none;cursor:pointer;}
 
+  .track{opacity:0.9;stroke-linecap:round}
+  .poi{transition:all 0.15s ease;}
+  .poi.hovered{filter:brightness(1.4);}
+
   #tooltip {
-    position:absolute; background:#222; color:#fff; font-size:12px;
-    padding:4px 8px; border-radius:4px; pointer-events:none; white-space:pre;
-    z-index:3000; display:none;
+    position:absolute;
+    background:#222;
+    color:#fff;
+    font-size:12px;
+    padding:4px 8px;
+    border-radius:4px;
+    pointer-events:none;
+    white-space:pre;
+    z-index:3000;
+    display:none;
   }
+  .checkbox{display:inline-flex;gap:8px;align-items:center}
 </style>
 </head>
 <body>
   <div class="wrap">
     <header>
-      <h1>ADM Map Viewer (Leaflet / Enoch)</h1>
+      <h1>ADM Map Viewer</h1>
       <div class="controls">
         <label class="btn">📁 Upload ADM<input type="file" id="fileInput" accept=".txt,.log,.adm"/></label>
-        <button class="btn" id="fitBtn" title="Fit to data">Fit</button>
+        <button class="btn" id="fitBtn" title="Fit to screen">Fit</button>
       </div>
     </header>
 
@@ -69,8 +70,22 @@
       <div id="playerList"></div>
     </div>
 
-    <div class="viewport panel">
-      <div id="map"></div>
+    <div class="viewport panel" id="viewport">
+      <div class="stage" id="stage">
+        <img id="map" src="map.jpg" alt="Map"/>
+        <svg id="overlay" class="overlay" xmlns="http://www.w3.org/2000/svg">
+          <defs>
+            <marker id="arrowhead" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
+              <path d="M0,0 L6,3 L0,6 Z" fill="context-stroke"></path>
+            </marker>
+          </defs>
+          <g id="tracks"></g>
+          <g id="dots"></g>
+          <g id="kills"></g>
+          <g id="damage"></g>
+          <g id="highlights"></g>
+        </svg>
+      </div>
     </div>
   </div>
 
@@ -78,72 +93,19 @@
 
 <script>
 (() => {
-  // -------- Fixed-zoom (max detail) tile layer ----------
-  // This custom layer *always* requests tiles at a fixed zoom (your map's max),
-  // and remaps incoming (x,y,z) to that zoom level. Leaflet then scales them.
-  const FixedMaxTileLayer = L.TileLayer.extend({
-    initialize: function (url, options={}) {
-      L.TileLayer.prototype.initialize.call(this, url, options);
-      this._fixedZoom = options.fixedZoom; // required
-      this._tileSize = options.tileSize || 256;
-    },
-    getTileUrl: function (coords) {
-      const zFixed = this._fixedZoom;
-      const factor = Math.pow(2, zFixed - coords.z);
-      // Map incoming tile coords to the fixed zoom grid
-      const x = Math.floor(coords.x * factor);
-      const y = Math.floor(coords.y * factor);
-      const data = {
-        z: zFixed,
-        x: x,
-        y: y
-      };
-      return L.Util.template(this._url, L.extend(data, this.options));
-    }
-  });
+  const WORLD=12800;
 
-  // ----------------- Map boot -----------------
-  const mapInfos = Arma3Map?.Maps?.enoch;
-  if (!mapInfos) { alert('maps/enoch.js not loaded or Arma3Map.Maps.enoch missing.'); return; }
-
-  const map = L.map('map', {
-    minZoom: mapInfos.minZoom,
-    // allow overzooming a few extra levels for tighter inspection
-    maxZoom: mapInfos.maxZoom + 4,
-    crs: mapInfos.CRS,
-    zoomDelta: 0.25,
-    zoomSnap: 0.25,
-    // small rendering tweaks to reduce perceived tile flicker
-    fadeAnimation: false,
-    zoomAnimation: true
-  });
-
-  // IMPORTANT:
-  // Use your existing mapInfos.tilePattern.
-  // If it is a RELATIVE path (e.g. "maps/enoch/{z}/{x}/{y}.png"), keep the leading '.'.
-  // If it is an ABSOLUTE URL (e.g. "https://.../{z}/{x}/{y}.webp"), remove the '.' in front.
-  const tileUrl = '.' + mapInfos.tilePattern; // keep as-is if your current setup works
-
-  const tiles = new FixedMaxTileLayer(tileUrl, {
-    tileSize: mapInfos.tileSize,
-    fixedZoom: mapInfos.maxZoom, // <-- always request MAX zoom tiles
-    maxNativeZoom: mapInfos.maxZoom,
-    maxZoom: mapInfos.maxZoom + 4,
-    noWrap: true,
-    keepBuffer: 6,               // keep more tiles around to reduce reloads
-    updateWhenIdle: true,
-    updateWhenZooming: false
-  }).addTo(map);
-
-  map.setView(mapInfos.center, mapInfos.defaultZoom);
-
-  // Optional helpers from mapUtils.js
-  L.latlngGraticule().addTo(map);
-  L.control.scale({ maxWidth: 200, imperial: false }).addTo(map);
-  L.control.gridMousePosition().addTo(map);
-
-  // ----------------- UI refs -----------------
   const fileInput=document.getElementById('fileInput');
+  const viewport=document.getElementById('viewport');
+  const stage=document.getElementById('stage');
+  const mapImg=document.getElementById('map');
+  const overlay=document.getElementById('overlay');
+  const gTracks=document.getElementById('tracks');
+  const gDots=document.getElementById('dots');
+  const gKills=document.getElementById('kills');
+  const gDamage=document.getElementById('damage');
+  const gHighlights=document.getElementById('highlights');
+  const fitBtn=document.getElementById('fitBtn');
   const startTimeSel=document.getElementById('startTime');
   const endTimeSel=document.getElementById('endTime');
   const playerListDiv=document.getElementById('playerList');
@@ -152,11 +114,6 @@
   const tooltip=document.getElementById('tooltip');
   const killToggle=document.getElementById('killToggle');
   const damageToggle=document.getElementById('damageToggle');
-  const fitBtn=document.getElementById('fitBtn');
-
-  // ----------------- State -----------------
-  const timeToSec = t => { const [H,M,S]=t.split(':').map(n=>+n); return (H*3600+M*60+S)|0; };
-  const worldToLatLng = p => L.latLng(p.z, p.x); // lat=z, lng=x in this CRS
 
   let snapshots=new Map(),orderedTimestamps=[];
   let killEvents=[];       // PvP kills
@@ -164,31 +121,38 @@
   let suicides=[];         // suicides
   let dmgPvpEvents=[];     // PvP damage
   let dmgAiEvents=[];      // AI/animal damage
-
+  let imgW=0,imgH=0;
+  let scale=1,tx=0,ty=0,fitScale=1;
+  let MIN_SCALE=0.001,MAX_SCALE=200;
   let selectedPlayers=new Set();
   let playerColors=new Map();
 
-  // Layers
-  const tracksLayer      = L.layerGroup().addTo(map);
-  const dotsLayer        = L.layerGroup().addTo(map);
-  const killsLayer       = L.layerGroup().addTo(map);
-  const damageLayer      = L.layerGroup().addTo(map);
-  const highlightsLayer  = L.layerGroup().addTo(map);
+  // Tuned sizes
+  const baseDotSize=25, baseStroke=5, baseLine=10;
+  const dotMin=0.02, dotMax=25, lineMin=0.04, lineMax=1.5;
 
-  function clearAllLayers(){
-    tracksLayer.clearLayers();
-    dotsLayer.clearLayers();
-    killsLayer.clearLayers();
-    damageLayer.clearLayers();
-    highlightsLayer.clearLayers();
-  }
+  // Regexes
+  const posRe=/^(?<time>\d{2}:\d{2}:\d{2})\s*\|\s*Player\s+"(?<name>.+?)"\s*\(id=(?<id>\d+)\s+pos=<\s*(?<x>[-+\d.]+)\s*,\s*(?<z>[-+\d.]+)\s*,\s*(?<y>[-+\d.]+)\s*>\)\s*$/i;
 
-  // ----------------- Tooltip helpers -----------------
-  function showTooltip(x,y,text){ tooltip.style.display='block'; tooltip.textContent=text; moveTooltip(x,y); }
-  function moveTooltip(x,y){ tooltip.style.left=(x+12)+'px'; tooltip.style.top=(y+12)+'px'; }
-  function hideTooltip(){ tooltip.style.display='none'; }
+  const killRe=/^(?<time>\d{2}:\d{2}:\d{2})\s*\|\s*Player\s+"(?<victim>.+?)"\s*\(DEAD\)\s*\(id=(?<vid>\d+)\s+pos=<\s*(?<vx>[-+\d.]+)\s*,\s*(?<vz>[-+\d.]+)\s*,\s*(?<vy>[-+\d.]+)\s*>\)\s*killed by\s*Player\s+"(?<killer>.+?)"\s*\(id=(?<kid>\d+)\s+pos=<\s*(?<kx>[-+\d.]+)\s*,\s*(?<kz>[-+\d.]+)\s*,\s*(?<ky>[-+\d.]+)\s*>\)\s*with\s*(?<weapon>.+?)\s*from\s*(?<dist>[-+\d.]+)\s*meters\s*$/i;
 
-  // ----------------- Colors -----------------
+  // AI kills (anything after "killed by" that is NOT "Player ...")
+  const aiRe=/^(?<time>\d{2}:\d{2}:\d{2})\s*\|\s*Player\s+"(?<victim>.+?)"\s*\(DEAD\)\s*\(id=(?<vid>\d+)\s+pos=<\s*(?<vx>[-+\d.]+)\s*,\s*(?<vz>[-+\d.]+)\s*,\s*(?<vy>[-+\d.]+)\s*>\)\s*killed by\s*(?!Player\b)(?<ai>.+?)\s*$/i;
+
+  // Suicide
+  const suicideRe=/^(?<time>\d{2}:\d{2}:\d{2})\s*\|\s*Player\s+"(?<victim>.+?)"\s*\(id=(?<vid>\d+)\s+pos=<\s*(?<vx>[-+\d.]+)\s*,\s*(?<vz>[-+\d.]+)\s*,\s*(?<vy>[-+\d.]+)\s*>\)\s*committed suicide\s*$/i;
+
+  // PvP damage — optional (DEAD), optional [HP: ...], optional distance
+  const dmgPvpRe =
+  /^(?<time>\d{2}:\d{2}:\d{2})\s*\|\s*Player\s+"(?<victim>.+?)"\s*(?:\(DEAD\)\s*)?\(id=(?<vid>\d+)\s+pos=<\s*(?<vx>[-+\d.]+)\s*,\s*(?<vz>[-+\d.]+)\s*,\s*(?<vy>[-+\d.]+)\s*>\)\s*(?:\[\s*HP:\s*(?<hp>[-+\d.]+)\s*\]\s*)?hit by\s*Player\s+"(?<attacker>.+?)"\s*\(id=(?<aid>\d+)\s+pos=<\s*(?<ax>[-+\d.]+)\s*,\s*(?<az>[-+\d.]+)\s*,\s*(?<ay>[-+\d.]+)\s*>\)\s*into\s*(?<part>[A-Za-z]+)\(\d+\)\s*for\s*(?<dmg>[-+\d.]+)\s*damage\s*\((?<attack>[^)]+)\)\s*with\s*(?<weapon>.+?)(?:\s*from\s*(?<dist>[-+\d.]+)\s*meters)?\s*$/i;
+
+  // AI/animal → player damage — optional [HP: ...], optional distance
+  const dmgAiRe =
+  /^(?<time>\d{2}:\d{2}:\d{2})\s*\|\s*Player\s+"(?<victim>.+?)"\s*\(id=(?<vid>\d+)\s+pos=<\s*(?<vx>[-+\d.]+)\s*,\s*(?<vz>[-+\d.]+)\s*,\s*(?<vy>[-+\d.]+)\s*>\)\s*(?:\[\s*HP:\s*(?<hp>[-+\d.]+)\s*\]\s*)?hit by\s*(?<ai>.+?)\s*into\s*(?<part>[A-Za-z]+)\(\d+\)\s*for\s*(?<dmg>[-+\d.]+)\s*damage\s*\((?<attack>[^)]+)\)(?:\s*from\s*(?<dist>[-+\d.]+)\s*meters)?\s*$/i;
+
+  const timeToSec = t => { const [H,M,S]=t.split(':').map(n=>+n); return (H*3600+M*60+S)|0; };
+  const worldToImagePx = p => ({ xpx:(p.x/WORLD)*imgW, ypx:imgH-(p.z/WORLD)*imgH });
+
   function darkerColor(hex){
     const c=document.createElement("canvas").getContext("2d");
     c.fillStyle=hex;c.fillRect(0,0,1,1);
@@ -196,40 +160,6 @@
     return `rgb(${r*0.6},${g*0.6},${b*0.6})`;
   }
 
-  // ----------------- Regex (positions / kills / damage) -----------------
-  const posRe=/^(?<time>\d{2}:\d{2}:\d{2})\s*\|\s*Player\s+"(?<name>.+?)"\s*\(id=(?<id>\d+)\s+pos=<\s*(?<x>[-+\d.]+)\s*,\s*(?<z>[-+\d.]+)\s*,\s*(?<y>[-+\d.]+)\s*>\)\s*$/i;
-
-  const killRe=/^(?<time>\d{2}:\d{2}:\d{2})\s*\|\s*Player\s+"(?<victim>.+?)"\s*\(DEAD\)\s*\(id=(?<vid>\d+)\s+pos=<\s*(?<vx>[-+\d.]+)\s*,\s*(?<vz>[-+\d.]+)\s*,\s*(?<vy>[-+\d.]+)\s*>\)\s*killed by\s*Player\s+"(?<killer>.+?)"\s*\(id=(?<kid>\d+)\s+pos=<\s*(?<kx>[-+\d.]+)\s*,\s*(?<kz>[-+\d.]+)\s*,\s*(?<ky>[-+\d.]+)\s*>\)\s*with\s*(?<weapon>.+?)\s*from\s*(?<dist>[-+\d.]+)\s*meters\s*$/i;
-
-  const aiRe=/^(?<time>\d{2}:\d{2}:\d{2})\s*\|\s*Player\s+"(?<victim>.+?)"\s*\(DEAD\)\s*\(id=(?<vid>\d+)\s+pos=<\s*(?<vx>[-+\d.]+)\s*,\s*(?<vz>[-+\d.]+)\s*,\s*(?<vy>[-+\d.]+)\s*>\)\s*killed by\s*(?!Player\b)(?<ai>.+?)\s*$/i;
-
-  const suicideRe=/^(?<time>\d{2}:\d{2}:\d{2})\s*\|\s*Player\s+"(?<victim>.+?)"\s*\(id=(?<vid>\d+)\s+pos=<\s*(?<vx>[-+\d.]+)\s*,\s*(?<vz>[-+\d.]+)\s*,\s*(?<vy>[-+\d.]+)\s*>\)\s*committed suicide\s*$/i;
-
-  const dmgPvpRe =
-  /^(?<time>\d{2}:\d{2}:\d{2})\s*\|\s*Player\s+"(?<victim>.+?)"\s*(?:\(DEAD\)\s*)?\(id=(?<vid>\d+)\s+pos=<\s*(?<vx>[-+\d.]+)\s*,\s*(?<vz>[-+\d.]+)\s*,\s*(?<vy>[-+\d.]+)\s*>\)\s*(?:\[\s*HP:\s*(?<hp>[-+\d.]+)\s*\]\s*)?hit by\s*Player\s+"(?<attacker>.+?)"\s*\(id=(?<aid>\d+)\s+pos=<\s*(?<ax>[-+\d.]+)\s*,\s*(?<az>[-+\d.]+)\s*,\s*(?<ay>[-+\d.]+)\s*>\)\s*into\s*(?<part>[A-Za-z]+)\(\d+\)\s*for\s*(?<dmg>[-+\d.]+)\s*damage\s*\((?<attack>[^)]+)\)\s*with\s*(?<weapon>.+?)(?:\s*from\s*(?<dist>[-+\d.]+)\s*meters)?\s*$/i;
-
-  const dmgAiRe =
-  /^(?<time>\d{2}:\d{2}:\d{2})\s*\|\s*Player\s+"(?<victim>.+?)"\s*\(id=(?<vid>\d+)\s+pos=<\s*(?<vx>[-+\d.]+)\s*,\s*(?<vz>[-+\d.]+)\s*,\s*(?<vy>[-+\d.]+)\s*>\)\s*(?:\[\s*HP:\s*(?<hp>[-+\d.]+)\s*\]\s*)?hit by\s*(?<ai>.+?)\s*into\s*(?<part>[A-Za-z]+)\(\d+\)\s*for\s*(?<dmg>[-+\d.]+)\s*damage\s*\((?<attack>[^)]+)\)(?:\s*from\s*(?<dist>[-+\d.]+)\s*meters)?\s*$/i;
-
-  // ----------------- Size helpers -----------------
-  function dotRadius(){
-    const z = map.getZoom();
-    const base = 2;
-    const grow = (z - mapInfos.minZoom) * 0.6;
-    return Math.max(2, base + grow);
-  }
-  function lineWeight(){
-    const z = map.getZoom();
-    const base = 1;
-    const grow = (z - mapInfos.minZoom) * 0.35;
-    return Math.max(1, base + grow);
-  }
-  function arrowPixelSize(){
-    const z = map.getZoom();
-    return Math.max(6, 4 + (z - mapInfos.minZoom) * 1.2);
-  }
-
-  // ----------------- Parsing -----------------
   function parseADM(text){
     snapshots.clear(); orderedTimestamps=[]; killEvents=[]; aiDeaths=[]; suicides=[]; dmgPvpEvents=[]; dmgAiEvents=[];
     for(const raw of text.split(/\r?\n/)){
@@ -324,23 +254,24 @@
     const a=timeToSec(startTimeSel.value||'00:00:00');
     const b=timeToSec(endTimeSel.value||'00:00:00');
     const lo=Math.min(a,b), hi=Math.max(a,b);
-    const mapP=new Map();
+    const map=new Map();
     orderedTimestamps.forEach(t=>{
       const ts=timeToSec(t);
       if(ts>=lo && ts<=hi){
         for(const p of (snapshots.get(t)||[])){
-          if(!mapP.has(p.name)) mapP.set(p.name,[]);
-          mapP.get(p.name).push({...p,time:t});
+          if(!map.has(p.name)) map.set(p.name,[]);
+          map.get(p.name).push({...p,time:t});
         }
       }
     });
-    return mapP;
+    return map;
   }
 
   function killsInRangeFiltered(){
     const a=timeToSec(startTimeSel.value||'00:00:00');
     const b=timeToSec(endTimeSel.value||'00:00:00');
     const lo=Math.min(a,b), hi=Math.max(a,b);
+    // PvP only if victim or attacker is selected
     return killEvents.filter(k=>{
       const ts=timeToSec(k.time);
       if(!(ts>=lo && ts<=hi)) return false;
@@ -421,219 +352,278 @@
     }
   }
 
-  // ----------------- Size helpers (dynamic with zoom) -----------------
-  function currentDotRadius(){ return Math.max(2, 2 + (map.getZoom() - mapInfos.minZoom) * 0.6); }
-  function currentLineWeight(){ return Math.max(1, 1 + (map.getZoom() - mapInfos.minZoom) * 0.35); }
-  function currentArrowSize(){ return Math.max(6, 4 + (map.getZoom() - mapInfos.minZoom) * 1.2); }
-
-  // ----------------- Leaflet drawing helpers -----------------
-  function addDot(pos, color, tooltipText){
-    const latlng = worldToLatLng(pos);
-    const r = currentDotRadius();
-    const m = L.circleMarker(latlng, {
-      radius: r, color: '#fff', weight: 1.5, fillColor: color, fillOpacity: 1
-    }).addTo(dotsLayer);
-    m.on('mouseover', e => showTooltip(e.originalEvent.pageX, e.originalEvent.pageY, tooltipText));
-    m.on('mousemove', e => moveTooltip(e.originalEvent.pageX, e.originalEvent.pageY));
-    m.on('mouseout',  hideTooltip);
-  }
-
-  // Arrowed line, offset away from dots
-  function addArrowLine(p0, p1, color){
-    const z0 = worldToLatLng(p0);
-    const z1 = worldToLatLng(p1);
-    const w = currentLineWeight();
-
-    const p0px = map.latLngToLayerPoint(z0);
-    const p1px = map.latLngToLayerPoint(z1);
-
-    const dx = p1px.x - p0px.x, dy = p1px.y - p0px.y;
-    const len = Math.hypot(dx, dy) || 1;
-    const ux = dx / len, uy = dy / len;
-    const px = -uy, py = ux;
-
-    const r = currentDotRadius();
-    const gap = Math.max(2, r + 2);
-
-    const startPx = L.point(p0px.x + ux * gap, p0px.y + uy * gap);
-    const endPx   = L.point(p1px.x - ux * gap, p1px.y - uy * gap);
-
-    L.polyline(
-      [ map.layerPointToLatLng(startPx), map.layerPointToLatLng(endPx) ],
-      { color: darkerColor(color), weight: w, opacity: 0.95 }
-    ).addTo(tracksLayer);
-
-    const sPx = currentArrowSize();
-    const tip   = L.point(endPx.x + ux * sPx, endPx.y + uy * sPx);
-    const baseC = endPx;
-    const left  = L.point(baseC.x + px * (sPx * 0.55), baseC.y + py * (sPx * 0.55));
-    const right = L.point(baseC.x - px * (sPx * 0.55), baseC.y - py * (sPx * 0.55));
-    const triLL = [ map.layerPointToLatLng(tip), map.layerPointToLatLng(left), map.layerPointToLatLng(right) ];
-
-    L.polygon(triLL, { color: '#fff', weight: Math.max(1, w * 0.9), fillColor: '#fff', fillOpacity: 1 }).addTo(tracksLayer);
-    const headColor = darkerColor(color);
-    L.polygon(triLL, { color: headColor, weight: Math.max(1, w * 0.7), fillColor: headColor, fillOpacity: 1 }).addTo(tracksLayer);
-  }
-
-  // Kill "X"
-  function addKillX(center, color, weight){
-    const arm = 40;
-    const c = worldToLatLng(center);
-    const a1w = L.polyline([ L.latLng(c.lat - arm, c.lng - arm), L.latLng(c.lat + arm, c.lng + arm) ],
-      { color:'#fff', weight:(weight??6)*1.6 }).addTo(killsLayer);
-    const a1  = L.polyline([ L.latLng(c.lat - arm, c.lng - arm), L.latLng(c.lat + arm, c.lng + arm) ],
-      { color,       weight:(weight??6) }).addTo(killsLayer);
-    const a2w = L.polyline([ L.latLng(c.lat + arm, c.lng - arm), L.latLng(c.lat - arm, c.lng + arm) ],
-      { color:'#fff', weight:(weight??6)*1.6 }).addTo(killsLayer);
-    const a2  = L.polyline([ L.latLng(c.lat + arm, c.lng - arm), L.latLng(c.lat - arm, c.lng + arm) ],
-      { color,       weight:(weight??6) }).addTo(killsLayer);
-    return L.layerGroup([a1w,a1,a2w,a2]);
-  }
-
-  // 8-point burst
-  function addBurst(center, color, weight){
-    const c = worldToLatLng(center);
-    const rOuter = 50, rInner = rOuter*0.45, spikes=8;
-    const pts=[]; for(let i=0;i<spikes*2;i++){
-      const ang=(Math.PI/spikes)*i, rr=(i%2===0)?rOuter:rInner;
-      const dx=Math.cos(ang)*rr, dy=Math.sin(ang)*rr;
-      pts.push(L.latLng(c.lat + dy, c.lng + dx));
-    }
-    const outline=L.polygon(pts,{color:'#000',weight:(weight??6)*1.6,fillColor:'#000',fillOpacity:1});
-    const body   =L.polygon(pts,{color:'#fff',weight:(weight??6)*1.1,fillColor:color, fillOpacity:1});
-    const group=L.layerGroup([outline,body]).addTo(damageLayer);
-    return group;
-  }
-
-  // Role markers with position in tooltip
-  function addDiamond(center, color, size, name){
-    const c=worldToLatLng(center), r=size??40;
-    const pts=[ L.latLng(c.lat - r, c.lng), L.latLng(c.lat, c.lng + r), L.latLng(c.lat + r, c.lng), L.latLng(c.lat, c.lng - r) ];
-    const poly=L.polygon(pts,{color:'#fff',weight:4,fillColor:color,fillOpacity:1}).addTo(highlightsLayer);
-    const label=`${name} (Victim)\nX:${center.x.toFixed(1)} Z:${center.z.toFixed(1)} Y:${center.y.toFixed(1)}`;
-    poly.on('mouseover', e=>showTooltip(e.originalEvent.pageX,e.originalEvent.pageY,label));
-    poly.on('mousemove', e=>moveTooltip(e.originalEvent.pageX,e.originalEvent.pageY));
-    poly.on('mouseout', hideTooltip);
-  }
-  function addTriangle(center, color, size, name){
-    const c=worldToLatLng(center), a=size??40, h=a*Math.sqrt(3);
-    const top=L.latLng(c.lat - a, c.lng);
-    const br =L.latLng(c.lat + a*0.9, c.lng + (h/2)*0.577);
-    const bl =L.latLng(c.lat + a*0.9, c.lng - (h/2)*0.577);
-    const poly=L.polygon([top,br,bl],{color:'#fff',weight:4,fillColor:color,fillOpacity:1}).addTo(highlightsLayer);
-    const label=`${name} (Attacker)\nX:${center.x.toFixed(1)} Z:${center.z.toFixed(1)} Y:${center.y.toFixed(1)}`;
-    poly.on('mouseover', e=>showTooltip(e.originalEvent.pageX,e.originalEvent.pageY,label));
-    poly.on('mousemove', e=>moveTooltip(e.originalEvent.pageX,e.originalEvent.pageY));
-    poly.on('mouseout', hideTooltip);
-  }
-
-  // ----------------- Render -----------------
   function renderRange(){
-    clearAllLayers(); hideTooltip();
+    gTracks.innerHTML=''; gDots.innerHTML=''; gKills.innerHTML=''; gDamage.innerHTML=''; gHighlights.innerHTML='';
+    tooltip.style.display='none';
 
     const paths=gatherPlayersInRange();
 
-    // Tracks (arrowed, offset from dots) & dots
+    const raw=fitScale/scale;
+    const dotFactor=Math.min(dotMax,Math.max(dotMin,raw));
+    const lineFactor=Math.min(lineMax,Math.max(lineMin,raw));
+    const dotSize=baseDotSize*dotFactor;
+    const strokeW=baseStroke*dotFactor;
+    const lineW=baseLine*lineFactor;
+
+    // Tracks & dots
     paths.forEach((positions,name)=>{
       if(!selectedPlayers.has(name))return;
       const color=playerColors.get(name)||'#ff0000';
+      const lineColor=darkerColor(color);
       positions.sort((a,b)=>timeToSec(a.time)-timeToSec(b.time));
 
       if(positions.length>1){
         for(let i=1;i<positions.length;i++){
-          addArrowLine(positions[i-1], positions[i], color);
+          const p0=worldToImagePx(positions[i-1]);
+          const p1=worldToImagePx(positions[i]);
+          const dx=p1.xpx-p0.xpx,dy=p1.ypx-p0.ypx,len=Math.hypot(dx,dy)||1;
+          const offset=dotSize+2;const ox=(dx/len)*offset,oy=(dy/len)*offset;
+          const line=document.createElementNS('http://www.w3.org/2000/svg','line');
+          line.setAttribute('x1',p0.xpx+ox); line.setAttribute('y1',p0.ypx+oy);
+          line.setAttribute('x2',p1.xpx-ox); line.setAttribute('y2',p1.ypx-oy);
+          line.setAttribute('stroke-width',lineW);
+          line.setAttribute('class','track'); line.setAttribute('stroke',lineColor);
+          line.setAttribute('marker-end','url(#arrowhead)');
+          gTracks.appendChild(line);
         }
       }
 
       for(const pos of positions){
-        addDot(pos, color, `${name}\n${pos.time}\nX:${pos.x.toFixed(1)} Z:${pos.z.toFixed(1)} Y:${pos.y.toFixed(1)}`);
+        const {xpx,ypx}=worldToImagePx(pos);
+        const c=document.createElementNS('http://www.w3.org/2000/svg','circle');
+        c.setAttribute('cx',xpx); c.setAttribute('cy',ypx);
+        c.setAttribute('r',dotSize);
+        c.setAttribute('stroke-width',strokeW);
+        c.setAttribute('class','poi'); c.setAttribute('fill',color);
+        c.setAttribute('stroke','#fff');
+
+        c.addEventListener('mouseenter',()=>{
+          c.classList.add('hovered');
+          tooltip.style.display='block';
+          tooltip.textContent=`${name}\n${pos.time}\nX:${pos.x.toFixed(1)} Z:${pos.z.toFixed(1)} Y:${pos.y.toFixed(1)}`;
+        });
+        c.addEventListener('mousemove',(e)=>{ tooltip.style.left=(e.pageX+12)+'px'; tooltip.style.top=(e.pageY+12)+'px'; });
+        c.addEventListener('mouseleave',()=>{ c.classList.remove('hovered'); tooltip.style.display='none'; });
+
+        gDots.appendChild(c);
       }
     });
 
-    // Kills
     if(killToggle.checked){
+      // PvP kills (clickable => role markers)
       for(const k of killsInRangeFiltered()){
+        const vicPx=worldToImagePx(k.victim);
         const color=playerColors.get(k.victimName)||'#ff0000';
-        const g=addKillX(k.victim, color, 6);
-        g.addTo(killsLayer);
-        const tip=`${k.victimName} killed by ${k.killerName}\nwith ${k.weapon} from ${k.distance.toFixed(2)} m\n${k.time}`;
-        g.on('mouseover', e=>showTooltip(e.originalEvent.pageX,e.originalEvent.pageY,tip));
-        g.on('mousemove', e=>moveTooltip(e.originalEvent.pageX,e.originalEvent.pageY));
-        g.on('mouseout', hideTooltip);
-        g.on('click', ()=>{
-          highlightsLayer.clearLayers();
-          addDiamond(k.victim,  playerColors.get(k.victimName)||'#ff0000', 40, k.victimName);
-          addTriangle(k.killer, playerColors.get(k.killerName)||'#ff0000', 40, k.killerName);
-        });
+        drawKillX(vicPx.xpx, vicPx.ypx, dotSize, strokeW, color, '#fff',
+          `${k.victimName} killed by ${k.killerName}\nwith ${k.weapon} from ${k.distance.toFixed(2)} meters\n${k.time}`,
+          () => {
+            gHighlights.innerHTML='';
+            drawRoleMarker('victim',  vicPx.xpx, vicPx.ypx, dotSize, playerColors.get(k.victimName)||'#ff0000',  k.victimName,  k.victim,  strokeW);
+            const killerPx=worldToImagePx(k.killer);
+            drawRoleMarker('attacker',killerPx.xpx, killerPx.ypx, dotSize, playerColors.get(k.killerName)||'#ff0000', k.killerName, k.killer, strokeW);
+          }
+        );
       }
+
+      // AI kills (non-clickable)
       for(const k of aiInRangeFiltered()){
+        const vicPx=worldToImagePx(k.victim);
         const color=playerColors.get(k.victimName)||'#ff0000';
-        const g=addKillX(k.victim, color, 6).addTo(killsLayer);
-        g.on('mouseover', e=>showTooltip(e.originalEvent.pageX,e.originalEvent.pageY,`${k.victimName} killed by AI ${k.ai}\n${k.time}`));
-        g.on('mousemove', e=>moveTooltip(e.originalEvent.pageX,e.originalEvent.pageY));
-        g.on('mouseout', hideTooltip);
+        drawKillX(vicPx.xpx, vicPx.ypx, dotSize, strokeW, color, '#fff',
+          `${k.victimName} killed by AI ${k.ai}\n${k.time}`, null
+        );
       }
+
+      // Suicides (non-clickable)
       for(const s of suicidesInRangeFiltered()){
+        const px=worldToImagePx(s.victim);
         const color=playerColors.get(s.victimName)||'#ff0000';
-        const g=addKillX(s.victim, color, 6).addTo(killsLayer);
-        g.on('mouseover', e=>showTooltip(e.originalEvent.pageX,e.originalEvent.pageY,`${s.victimName} committed suicide\n${s.time}`));
-        g.on('mousemove', e=>moveTooltip(e.originalEvent.pageX,e.originalEvent.pageY));
-        g.on('mouseout', hideTooltip);
+        drawKillX(px.xpx, px.ypx, dotSize, strokeW, color, '#fff',
+          `${s.victimName} committed suicide\n${s.time}`, null
+        );
       }
     }
 
-    // Damage
     if(damageToggle.checked){
+      // PvP damage — clickable
       for(const ev of damagePvpInRangeFiltered()){
+        const vicPx=worldToImagePx(ev.victim);
         const color=playerColors.get(ev.victimName)||'#ff0000';
-        const hpText   = (ev.hp??ev.hp===0) ? `\nHP: ${ev.hp.toFixed(2)}` : '';
-        const distText = (ev.distance??ev.distance===0) ? `\nDist: ${ev.distance.toFixed(2)} m` : '';
-        const tip = `${ev.victimName} hit by ${ev.attackerName}\n${ev.part} for ${ev.damage} dmg\n${ev.attack} with ${ev.weapon}${distText}${hpText}\n${ev.time}`;
-        const g=addBurst(ev.victim, color, 6);
-        g.on('mouseover', e=>showTooltip(e.originalEvent.pageX,e.originalEvent.pageY,tip));
-        g.on('mousemove', e=>moveTooltip(e.originalEvent.pageX,e.originalEvent.pageY));
-        g.on('mouseout', hideTooltip);
-        g.on('click', ()=>{
-          highlightsLayer.clearLayers();
-          addDiamond(ev.victim,  playerColors.get(ev.victimName)||'#ff0000', 40, ev.victimName);
-          addTriangle(ev.attacker, playerColors.get(ev.attackerName)||'#ff0000', 40, ev.attackerName);
-        });
+        const hpText = (ev.hp ?? ev.hp === 0) ? `\nHP: ${ev.hp.toFixed(2)}` : '';
+        const distText = (ev.distance ?? ev.distance === 0) ? `\nDist: ${ev.distance.toFixed(2)} m` : '';
+        drawBurst(
+          vicPx.xpx, vicPx.ypx, dotSize, strokeW, color, '#000',
+          `${ev.victimName} hit by ${ev.attackerName}\n${ev.part} for ${ev.damage} dmg\n${ev.attack} with ${ev.weapon}${distText}${hpText}\n${ev.time}`,
+          () => {
+            gHighlights.innerHTML='';
+            drawRoleMarker('victim',  vicPx.xpx, vicPx.ypx, dotSize, playerColors.get(ev.victimName)||'#ff0000',  ev.victimName,  ev.victim,  strokeW);
+            const atkPx=worldToImagePx(ev.attacker);
+            drawRoleMarker('attacker',atkPx.xpx, atkPx.ypx, dotSize, playerColors.get(ev.attackerName)||'#ff0000', ev.attackerName, ev.attacker, strokeW);
+          }
+        );
       }
+      // AI/animal damage — info only
       for(const ev of damageAiInRangeFiltered()){
+        const vicPx=worldToImagePx(ev.victim);
         const color=playerColors.get(ev.victimName)||'#ff0000';
-        const hpText   = (ev.hp??ev.hp===0) ? `\nHP: ${ev.hp.toFixed(2)}` : '';
-        const distText = (ev.distance??ev.distance===0) ? `\nDist: ${ev.distance.toFixed(2)} m` : '';
-        const tip = `${ev.victimName} hit by ${ev.ai}\n${ev.part} for ${ev.damage} dmg\n${ev.attack}${distText}${hpText}\n${ev.time}`;
-        const g=addBurst(ev.victim, color, 6);
-        g.on('mouseover', e=>showTooltip(e.originalEvent.pageX,e.originalEvent.pageY,tip));
-        g.on('mousemove', e=>moveTooltip(e.originalEvent.pageX,e.originalEvent.pageY));
-        g.on('mouseout', hideTooltip);
+        const hpText = (ev.hp ?? ev.hp === 0) ? `\nHP: ${ev.hp.toFixed(2)}` : '';
+        const distText = (ev.distance ?? ev.distance === 0) ? `\nDist: ${ev.distance.toFixed(2)} m` : '';
+        drawBurst(
+          vicPx.xpx, vicPx.ypx, dotSize, strokeW, color, '#000',
+          `${ev.victimName} hit by ${ev.ai}\n${ev.part} for ${ev.damage} dmg\n${ev.attack}${distText}${hpText}\n${ev.time}`,
+          null
+        );
       }
     }
+
+    applyTransform();
   }
 
-  // Re-render on zoom so sizes/offsets adjust correctly
-  map.on('zoomend', renderRange);
+  // Draw an "X" marker at (cx,cy)
+  function drawKillX(cx, cy, r, strokeW, color, outline, hoverText, onClick){
+    const arm=r*1.8; // sieze X
+    const x1=cx-arm, y1=cy-arm, x2=cx+arm, y2=cy+arm;
+    const x3=cx-arm, y3=cy+arm, x4=cx+arm, y4=cy-arm;
 
-  // ----------------- Fit to data -----------------
-  function fitToData(){
-    const latlngs=[];
-    const paths=gatherPlayersInRange();
-    for(const [_,positions] of paths){
-      for(const p of positions) latlngs.push(worldToLatLng(p));
-    }
-    if(latlngs.length){
-      const bounds=L.latLngBounds(latlngs);
-      map.fitBounds(bounds.pad(0.10));
-    }
+    const l1=document.createElementNS('http://www.w3.org/2000/svg','line');
+    l1.setAttribute('x1',x1); l1.setAttribute('y1',y1);
+    l1.setAttribute('x2',x2); l1.setAttribute('y2',y2);
+    l1.setAttribute('stroke',color); l1.setAttribute('stroke-width',strokeW*1.5); l1.setAttribute('stroke-linecap','round');
+
+    const l2=document.createElementNS('http://www.w3.org/2000/svg','line');
+    l2.setAttribute('x1',x3); l2.setAttribute('y1',y3);
+    l2.setAttribute('x2',x4); l2.setAttribute('y2',y4);
+    l2.setAttribute('stroke',color); l2.setAttribute('stroke-width',strokeW*1.5); l2.setAttribute('stroke-linecap','round');
+
+    const ol1=l1.cloneNode(true); ol1.setAttribute('stroke',outline); ol1.setAttribute('stroke-width',strokeW*2.5);
+    const ol2=l2.cloneNode(true); ol2.setAttribute('stroke',outline); ol2.setAttribute('stroke-width',strokeW*2.5);
+
+    const g=document.createElementNS('http://www.w3.org/2000/svg','g');
+    g.appendChild(ol1); g.appendChild(ol2); g.appendChild(l1); g.appendChild(l2);
+
+    g.addEventListener('mouseenter',()=>{ tooltip.style.display='block'; tooltip.textContent=hoverText; });
+    g.addEventListener('mousemove',(e)=>{ tooltip.style.left=(e.pageX+12)+'px'; tooltip.style.top=(e.pageY+12)+'px'; });
+    g.addEventListener('mouseleave',()=>{ tooltip.style.display='none'; });
+    if(onClick){ g.addEventListener('click', onClick); }
+
+    gKills.appendChild(g);
   }
 
-  // ----------------- UI wiring -----------------
+  // Role marker at (cx,cy): diamond (victim) triangle (attacker)
+  function drawRoleMarker(role, cx, cy, r, color, name, pos, strokeW){
+    const grp=document.createElementNS('http://www.w3.org/2000/svg','g');
+    const labelText = `${name} (${role==='victim'?'Victim':'Attacker'})\nX:${pos.x.toFixed(1)} Z:${pos.z.toFixed(1)} Y:${pos.y.toFixed(1)}`;
+
+    if(role==='victim'){
+      const pts = [
+        [cx, cy - r],
+        [cx + r, cy],
+        [cx, cy + r],
+        [cx - r, cy]
+      ].map(p=>p.join(',')).join(' ');
+      const poly=document.createElementNS('http://www.w3.org/2000/svg','polygon');
+      poly.setAttribute('points', pts);
+      poly.setAttribute('fill', color);
+      poly.setAttribute('stroke', '#fff');
+      poly.setAttribute('stroke-width', strokeW);
+      grp.appendChild(poly);
+    } else {
+      const a = r;
+      const h = a * Math.sqrt(3);
+      const pTop = [cx, cy - a];
+      const pBR  = [cx + (h/2)*0.577, cy + a*0.9];
+      const pBL  = [cx - (h/2)*0.577, cy + a*0.9];
+      const pts = [pTop,pBR,pBL].map(p=>p.join(',')).join(' ');
+      const tri=document.createElementNS('http://www.w3.org/2000/svg','polygon');
+      tri.setAttribute('points', pts);
+      tri.setAttribute('fill', color);
+      tri.setAttribute('stroke', '#fff');
+      tri.setAttribute('stroke-width', strokeW);
+      grp.appendChild(tri);
+    }
+
+    grp.addEventListener('mouseenter',()=>{ tooltip.style.display='block'; tooltip.textContent=labelText; });
+    grp.addEventListener('mousemove',(e)=>{ tooltip.style.left=(e.pageX+12)+'px'; tooltip.style.top=(e.pageY+12)+'px'; });
+    grp.addEventListener('mouseleave',()=>{ tooltip.style.display='none'; });
+
+    gHighlights.appendChild(grp);
+  }
+
+  // Draw burst star at (cx,cy)
+  function drawBurst(cx, cy, r, strokeW, color, outline, hoverText, onClick){
+    const points = [];
+    const spikes = 8;
+    const rOuter = r * 1.35;
+    const rInner = rOuter * 0.45;
+    for (let i=0;i<spikes*2;i++){
+      const ang = (Math.PI / spikes) * i; // 22.5° steps
+      const rr = (i % 2 === 0) ? rOuter : rInner;
+      points.push([cx + Math.cos(ang)*rr, cy + Math.sin(ang)*rr]);
+    }
+    const toStr = pts => pts.map(p=>p.join(',')).join(' ');
+
+    const g=document.createElementNS('http://www.w3.org/2000/svg','g');
+
+    // Fat outline beneath to boost contrast
+    const polyOutline=document.createElementNS('http://www.w3.org/2000/svg','polygon');
+    polyOutline.setAttribute('points', toStr(points));
+    polyOutline.setAttribute('fill', outline);
+    polyOutline.setAttribute('stroke', outline);
+    polyOutline.setAttribute('stroke-width', strokeW * 2.2);
+    g.appendChild(polyOutline);
+
+    const poly=document.createElementNS('http://www.w3.org/2000/svg','polygon');
+    poly.setAttribute('points', toStr(points));
+    poly.setAttribute('fill', color);
+    poly.setAttribute('stroke', '#fff');
+    poly.setAttribute('stroke-width', strokeW * 1.4);
+    g.appendChild(poly);
+
+    g.addEventListener('mouseenter', ()=>{ tooltip.style.display='block'; tooltip.textContent = hoverText; });
+    g.addEventListener('mousemove',  (e)=>{ tooltip.style.left=(e.pageX+12)+'px'; tooltip.style.top=(e.pageY+12)+'px'; });
+    g.addEventListener('mouseleave', ()=>{ tooltip.style.display='none'; });
+    if (onClick) g.addEventListener('click', onClick);
+
+    gDamage.appendChild(g);
+  }
+
+  function clampPan(){
+    const vw=viewport.clientWidth,vh=viewport.clientHeight;
+    const w=imgW*scale,h=imgH*scale;
+    if(w<=vw)tx=(vw-w)/2;else{const minTx=vw-w,maxTx=0;tx=Math.min(maxTx,Math.max(minTx,tx));}
+    if(h<=vh)ty=(vh-h)/2;else{const minTy=vh-h,maxTy=0;ty=Math.min(maxTy,Math.max(minTy,ty));}
+  }
+  function applyTransform(){clampPan();stage.style.transform=`translate(${tx}px,${ty}px) scale(${scale})`;}
+  function fitToViewport(){
+    if(!imgW||!imgH)return;
+    const vw=viewport.clientWidth,vh=viewport.clientHeight;
+    scale=Math.min(vw/imgW,vh/imgH);
+    fitScale=scale; MIN_SCALE=fitScale;
+    tx=(vw-imgW*scale)/2; ty=(vh-imgH*scale)/2;
+    applyTransform();
+  }
+  function zoomAt(cx,cy,f){
+    const old=scale; let next=Math.max(MIN_SCALE,Math.min(MAX_SCALE,scale*f));
+    const k=next/old; const sx=(cx-tx), sy=(cy-ty); tx=cx-sx*k; ty=cy-sy*k; scale=next;
+    renderRange(); applyTransform();
+  }
+
+  viewport.addEventListener('wheel',e=>{
+    e.preventDefault(); const rect=viewport.getBoundingClientRect();
+    zoomAt(e.clientX-rect.left,e.clientY-rect.top,(e.deltaY<0)?1.15:1/1.15);
+  },{passive:false});
+  let dragging=false,lx=0,ly=0;
+  viewport.addEventListener('mousedown',e=>{dragging=true;lx=e.clientX;ly=e.clientY;});
+  window.addEventListener('mouseup',()=>dragging=false);
+  window.addEventListener('mousemove',e=>{
+    if(!dragging)return; tx+=(e.clientX-lx); ty+=(e.clientY-ly); lx=e.clientX; ly=e.clientY; applyTransform();
+  });
+
+  fitBtn.addEventListener('click',fitToViewport);
   startTimeSel.addEventListener('change',()=>{populatePlayerListForRange();renderRange();});
   endTimeSel.addEventListener('change',()=>{populatePlayerListForRange();renderRange();});
   killToggle.addEventListener('change',()=>{renderRange();});
   damageToggle.addEventListener('change',()=>{renderRange();});
-  fitBtn.addEventListener('click', fitToData);
 
   selectAllBtn.addEventListener('click',()=>{
     const paths=gatherPlayersInRange(); selectedPlayers=new Set(paths.keys());
@@ -650,10 +640,16 @@
   fileInput.addEventListener('change',e=>{
     const f=e.target.files?.[0]; if(!f)return;
     const reader=new FileReader();
-    reader.onload=()=>{parseADM(String(reader.result||'')); populateTimestamps(); populatePlayerListForRange(); renderRange(); fitToData();};
+    reader.onload=()=>{parseADM(String(reader.result||'')); populateTimestamps(); populatePlayerListForRange(); fitToViewport(); renderRange();};
     reader.readAsText(f);
   });
-
+  mapImg.addEventListener('load',()=>{
+    imgW=mapImg.naturalWidth; imgH=mapImg.naturalHeight;
+    overlay.setAttribute('viewBox',`0 0 ${imgW} ${imgH}`);
+    overlay.setAttribute('width',imgW); overlay.setAttribute('height',imgH);
+    stage.style.width=imgW+'px'; stage.style.height=imgH+'px';
+    fitToViewport(); renderRange();
+  });
 })();
 </script>
 </body>
