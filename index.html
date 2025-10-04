@@ -87,16 +87,23 @@
     return;
   }
 
+  // Allow deeper zoom than native tiles (over-zoom)
+  const EXTRA_ZOOM = 4; // tweak 3–6 to taste
+
   // Build Leaflet map using Enoch settings
   const map = L.map('map', {
     minZoom: mapInfos.minZoom,
-    maxZoom: mapInfos.maxZoom,
-    crs: mapInfos.CRS
+    maxZoom: mapInfos.maxZoom + EXTRA_ZOOM,   // allow over-zoom beyond native
+    crs: mapInfos.CRS,
+    zoomDelta: 0.25,  // gentler step size (keeps your older Leaflet)
+    zoomSnap: 0.25
   });
 
   L.tileLayer('.' + mapInfos.tilePattern, {
     attribution: mapInfos.attribution,
-    tileSize: mapInfos.tileSize
+    tileSize: mapInfos.tileSize,
+    maxNativeZoom: mapInfos.maxZoom,          // tiles exist up to this level
+    maxZoom: mapInfos.maxZoom + EXTRA_ZOOM    // upscale past native level
   }).addTo(map);
 
   map.setView(mapInfos.center, mapInfos.defaultZoom);
