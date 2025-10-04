@@ -5,14 +5,14 @@
 <meta name="viewport" content="width=device-width,initial-scale=1" />
 <title>ADM Map Viewer (Leaflet Enoch)</title>
 
-<!-- Leaflet 1.6.0 -->
+<!-- Leaflet -->
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.6.0/dist/leaflet.css" />
 <script src="https://unpkg.com/leaflet@1.6.0/dist/leaflet.js"></script>
 
-<!-- jQuery (mapUtils uses it) -->
+<!-- jQuery (mapUtils uses it in some controls) -->
 <script src="https://unpkg.com/jquery@3.5.1/dist/jquery.min.js"></script>
 
-<!-- Utilities + Enoch CRS/metadata -->
+<!-- Teammate utilities + Enoch map definition -->
 <link rel="stylesheet" href="css/mapUtils.css" />
 <script src="js/mapUtils.js"></script>
 <script src="maps/enoch.js"></script>
@@ -30,6 +30,7 @@
   .panel{background:var(--panel);padding:12px;border-radius:10px;border:1px solid rgba(255,255,255,0.03);margin-bottom:10px}
   .checkbox{display:inline-flex;gap:8px;align-items:center}
 
+  /* Map container takes remaining height */
   .viewport{position:relative;height:75vh;min-height:420px;border-radius:12px;border:1px solid rgba(255,255,255,0.06);overflow:hidden;background:#000}
   #map{width:100%;height:100%}
 
@@ -42,14 +43,6 @@
     position:absolute; background:#222; color:#fff; font-size:12px;
     padding:4px 8px; border-radius:4px; pointer-events:none; white-space:pre;
     z-index:3000; display:none;
-  }
-
-  /* Small banner for tile errors */
-  #tileErr {
-    position:fixed; left:12px; bottom:12px; max-width:60ch;
-    background:#b91c1c; color:#fff; padding:8px 10px; border-radius:6px;
-    font:12px/1.3 ui-sans-serif,system-ui; display:none; z-index:5000;
-    box-shadow:0 6px 20px rgba(0,0,0,0.4);
   }
 </style>
 </head>
@@ -83,64 +76,32 @@
   </div>
 
   <div id="tooltip"></div>
-  <div id="tileErr"></div>
 
 <script>
 (() => {
   // ----------------- Map boot -----------------
+  // Enoch map info from maps/enoch.js (depends on mapUtils.js' Arma3Map scaffolding)
   const mapInfos = Arma3Map?.Maps?.enoch;
   if (!mapInfos) {
     alert('maps/enoch.js not loaded or Arma3Map.Maps.enoch missing.');
     return;
   }
 
-  // The server you provided has tiles at z = 1 .. 7
-  const MIN_Z = 1;
-  const NATIVE_MAX_Z = 7;
-  const EXTRA_ZOOM = 2; // allow zooming to z=9 (upscaled)
-
-  // Clamp the default zoom into available range
-  const initialZoom = Math.max(MIN_Z, Math.min(mapInfos.defaultZoom || NATIVE_MAX_Z, NATIVE_MAX_Z));
-
+  // Build Leaflet map using Enoch settings
   const map = L.map('map', {
-    minZoom: MIN_Z,
-    maxZoom: NATIVE_MAX_Z + EXTRA_ZOOM,
-    crs: mapInfos.CRS,     // keep the Enoch CRS so your ADM x/z positions align
-    zoomDelta: 0.25,
-    zoomSnap: 0.25
+    minZoom: mapInfos.minZoom,
+    maxZoom: mapInfos.maxZoom,
+    crs: mapInfos.CRS
   });
 
-  // Use your friend's hosted Livonia tiles (XYZ)
-  const TILE_URL = 'https://www.dayzrp.com/images/map/livonia/{z}/{x}/{y}.webp';
-
-  const tiles = L.tileLayer(TILE_URL, {
-    attribution: mapInfos.attribution || 'Livonia tiles',
-    tileSize: mapInfos.tileSize || 256,
-    maxNativeZoom: NATIVE_MAX_Z,
-    maxZoom: NATIVE_MAX_Z + EXTRA_ZOOM,
-    noWrap: true,
-    crossOrigin: true,
-    detectRetina: false
+  L.tileLayer('.' + mapInfos.tilePattern, {
+    attribution: mapInfos.attribution,
+    tileSize: mapInfos.tileSize
   }).addTo(map);
 
-  // Show a small banner if a tile fails to load — helps us see z/x/y Leaflet is requesting
-  const errBox = document.getElementById('tileErr');
-  tiles.on('tileerror', (e) => {
-    try {
-      const u = new URL(e.tile.src);
-      const parts = u.pathname.split('/').slice(-3); // [z,x,y.webp]
-      errBox.style.display = 'block';
-      errBox.textContent = `Tile load error for z/x/y: ${parts.join(' / ')}  →  ${e.tile.src}`;
-    } catch {
-      errBox.style.display = 'block';
-      errBox.textContent = `Tile load error: ${e.tile?.src || '(unknown URL)'}`;
-    }
-  });
+  map.setView(mapInfos.center, mapInfos.defaultZoom);
 
-  // Use mapInfos center but clamp zoom to what the server has
-  map.setView(mapInfos.center, initialZoom);
-
-  // Optional helpers
+  // Optional helpers from mapUtils.js
   L.latlngGraticule().addTo(map);
   L.control.scale({ maxWidth: 200, imperial: false }).addTo(map);
   L.control.gridMousePosition().addTo(map);
@@ -158,6 +119,7 @@
   const fitBtn=document.getElementById('fitBtn');
 
   // ----------------- State -----------------
+  const WORLD=12800; // game world size (used in your ADM)
   const timeToSec = t => { const [H,M,S]=t.split(':').map(n=>+n); return (H*3600+M*60+S)|0; };
   const worldToLatLng = p => L.latLng(p.z, p.x); // lat=z, lng=x in this CRS
 
@@ -171,7 +133,7 @@
   let selectedPlayers=new Set();
   let playerColors=new Map();
 
-  // Layers
+  // Layers (instead of <svg> groups)
   const tracksLayer      = L.layerGroup().addTo(map);
   const dotsLayer        = L.layerGroup().addTo(map);
   const killsLayer       = L.layerGroup().addTo(map);
@@ -193,6 +155,7 @@
 
   // ----------------- Colors -----------------
   function darkerColor(hex){
+    // quick n dirty: draw and read pixel
     const c=document.createElement("canvas").getContext("2d");
     c.fillStyle=hex;c.fillRect(0,0,1,1);
     const [r,g,b]=c.getImageData(0,0,1,1).data;
@@ -208,9 +171,11 @@
 
   const suicideRe=/^(?<time>\d{2}:\d{2}:\d{2})\s*\|\s*Player\s+"(?<victim>.+?)"\s*\(id=(?<vid>\d+)\s+pos=<\s*(?<vx>[-+\d.]+)\s*,\s*(?<vz>[-+\d.]+)\s*,\s*(?<vy>[-+\d.]+)\s*>\)\s*committed suicide\s*$/i;
 
+  // PvP damage — optional (DEAD), optional [HP], optional distance
   const dmgPvpRe =
   /^(?<time>\d{2}:\d{2}:\d{2})\s*\|\s*Player\s+"(?<victim>.+?)"\s*(?:\(DEAD\)\s*)?\(id=(?<vid>\d+)\s+pos=<\s*(?<vx>[-+\d.]+)\s*,\s*(?<vz>[-+\d.]+)\s*,\s*(?<vy>[-+\d.]+)\s*>\)\s*(?:\[\s*HP:\s*(?<hp>[-+\d.]+)\s*\]\s*)?hit by\s*Player\s+"(?<attacker>.+?)"\s*\(id=(?<aid>\d+)\s+pos=<\s*(?<ax>[-+\d.]+)\s*,\s*(?<az>[-+\d.]+)\s*,\s*(?<ay>[-+\d.]+)\s*>\)\s*into\s*(?<part>[A-Za-z]+)\(\d+\)\s*for\s*(?<dmg>[-+\d.]+)\s*damage\s*\((?<attack>[^)]+)\)\s*with\s*(?<weapon>.+?)(?:\s*from\s*(?<dist>[-+\d.]+)\s*meters)?\s*$/i;
 
+  // AI/animal → player damage — optional [HP], optional distance
   const dmgAiRe =
   /^(?<time>\d{2}:\d{2}:\d{2})\s*\|\s*Player\s+"(?<victim>.+?)"\s*\(id=(?<vid>\d+)\s+pos=<\s*(?<vx>[-+\d.]+)\s*,\s*(?<vz>[-+\d.]+)\s*,\s*(?<vy>[-+\d.]+)\s*>\)\s*(?:\[\s*HP:\s*(?<hp>[-+\d.]+)\s*\]\s*)?hit by\s*(?<ai>.+?)\s*into\s*(?<part>[A-Za-z]+)\(\d+\)\s*for\s*(?<dmg>[-+\d.]+)\s*damage\s*\((?<attack>[^)]+)\)(?:\s*from\s*(?<dist>[-+\d.]+)\s*meters)?\s*$/i;
 
@@ -423,6 +388,7 @@
     L.polyline(latlngs,{color:darkerColor(color),weight:weight??5,opacity:0.9}).addTo(tracksLayer);
   }
 
+  // Kill "X" (with white outline)
   function addKillX(center, color, weight){
     const arm = 40;
     const c = worldToLatLng(center);
@@ -444,6 +410,7 @@
     return L.layerGroup([a1w,a1,a2w,a2]);
   }
 
+  // 8-point burst (impact star) with outline
   function addBurst(center, color, weight){
     const c = worldToLatLng(center);
     const rOuter = 50, rInner = rOuter*0.45, spikes=8;
@@ -458,6 +425,7 @@
     return group;
   }
 
+  // Role markers with position in tooltip
   function addDiamond(center, color, size, name){
     const c=worldToLatLng(center), r=size??40;
     const pts=[ L.latLng(c.lat - r, c.lng),
@@ -482,29 +450,35 @@
     poly.on('mouseout', hideTooltip);
   }
 
-  // ----------------- Render / Fit -----------------
+  // ----------------- Render -----------------
   function renderRange(){
     clearAllLayers(); hideTooltip();
+
     const paths=gatherPlayersInRange();
 
+    // Tracks & dots
     paths.forEach((positions,name)=>{
       if(!selectedPlayers.has(name))return;
       const color=playerColors.get(name)||'#ff0000';
       positions.sort((a,b)=>timeToSec(a.time)-timeToSec(b.time));
+
       if(positions.length>1){
         for(let i=1;i<positions.length;i++){
           addTrack(positions[i-1], positions[i], color, 6);
         }
       }
+
       for(const pos of positions){
         addDot(pos, color, `${name}\n${pos.time}\nX:${pos.x.toFixed(1)} Z:${pos.z.toFixed(1)} Y:${pos.y.toFixed(1)}`, 7);
       }
     });
 
+    // Kills
     if(killToggle.checked){
       for(const k of killsInRangeFiltered()){
         const color=playerColors.get(k.victimName)||'#ff0000';
-        const g=addKillX(k.victim, color, 6).addTo(killsLayer);
+        const g=addKillX(k.victim, color, 6);
+        g.addTo(killsLayer);
         const tip=`${k.victimName} killed by ${k.killerName}\nwith ${k.weapon} from ${k.distance.toFixed(2)} m\n${k.time}`;
         g.on('mouseover', e=>showTooltip(e.originalEvent.pageX,e.originalEvent.pageY,tip));
         g.on('mousemove', e=>moveTooltip(e.originalEvent.pageX,e.originalEvent.pageY));
@@ -531,6 +505,7 @@
       }
     }
 
+    // Damage
     if(damageToggle.checked){
       for(const ev of damagePvpInRangeFiltered()){
         const color=playerColors.get(ev.victimName)||'#ff0000';
@@ -560,10 +535,11 @@
     }
   }
 
+  // ----------------- Fit to data -----------------
   function fitToData(){
     const latlngs=[];
     const paths=gatherPlayersInRange();
-    for(const [,positions] of paths){
+    for(const [name,positions] of paths){
       for(const p of positions) latlngs.push(worldToLatLng(p));
     }
     if(latlngs.length){
