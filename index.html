@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>ADM Map Viewer (Leaflet Enoch)</title>
+<title>ADM Map Viewer (Leaflet Enoch – fixed max-detail tiles)</title>
 
 <!-- Leaflet -->
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.6.0/dist/leaflet.css" />
@@ -12,7 +12,7 @@
 <!-- jQuery (mapUtils uses it in some controls) -->
 <script src="https://unpkg.com/jquery@3.5.1/dist/jquery.min.js"></script>
 
-<!-- Teammate utilities + Enoch map definition -->
+<!-- Utilities + Enoch map definition (your existing files) -->
 <link rel="stylesheet" href="css/mapUtils.css" />
 <script src="js/mapUtils.js"></script>
 <script src="maps/enoch.js"></script>
@@ -30,7 +30,6 @@
   .panel{background:var(--panel);padding:12px;border-radius:10px;border:1px solid rgba(255,255,255,0.03);margin-bottom:10px}
   .checkbox{display:inline-flex;gap:8px;align-items:center}
 
-  /* Map container takes remaining height */
   .viewport{position:relative;height:75vh;min-height:420px;border-radius:12px;border:1px solid rgba(255,255,255,0.06);overflow:hidden;background:#000}
   #map{width:100%;height:100%}
 
@@ -79,27 +78,61 @@
 
 <script>
 (() => {
+  // -------- Fixed-zoom (max detail) tile layer ----------
+  // This custom layer *always* requests tiles at a fixed zoom (your map's max),
+  // and remaps incoming (x,y,z) to that zoom level. Leaflet then scales them.
+  const FixedMaxTileLayer = L.TileLayer.extend({
+    initialize: function (url, options={}) {
+      L.TileLayer.prototype.initialize.call(this, url, options);
+      this._fixedZoom = options.fixedZoom; // required
+      this._tileSize = options.tileSize || 256;
+    },
+    getTileUrl: function (coords) {
+      const zFixed = this._fixedZoom;
+      const factor = Math.pow(2, zFixed - coords.z);
+      // Map incoming tile coords to the fixed zoom grid
+      const x = Math.floor(coords.x * factor);
+      const y = Math.floor(coords.y * factor);
+      const data = {
+        z: zFixed,
+        x: x,
+        y: y
+      };
+      return L.Util.template(this._url, L.extend(data, this.options));
+    }
+  });
+
   // ----------------- Map boot -----------------
   const mapInfos = Arma3Map?.Maps?.enoch;
-  if (!mapInfos) {
-    alert('maps/enoch.js not loaded or Arma3Map.Maps.enoch missing.');
-    return;
-  }
+  if (!mapInfos) { alert('maps/enoch.js not loaded or Arma3Map.Maps.enoch missing.'); return; }
 
   const map = L.map('map', {
     minZoom: mapInfos.minZoom,
-    maxZoom: mapInfos.maxZoom + 4, // allow extra over-zoom
+    // allow overzooming a few extra levels for tighter inspection
+    maxZoom: mapInfos.maxZoom + 4,
     crs: mapInfos.CRS,
     zoomDelta: 0.25,
-    zoomSnap: 0.25
+    zoomSnap: 0.25,
+    // small rendering tweaks to reduce perceived tile flicker
+    fadeAnimation: false,
+    zoomAnimation: true
   });
 
-  const tl = L.tileLayer('.' + mapInfos.tilePattern, {
-    attribution: mapInfos.attribution,
+  // IMPORTANT:
+  // Use your existing mapInfos.tilePattern.
+  // If it is a RELATIVE path (e.g. "maps/enoch/{z}/{x}/{y}.png"), keep the leading '.'.
+  // If it is an ABSOLUTE URL (e.g. "https://.../{z}/{x}/{y}.webp"), remove the '.' in front.
+  const tileUrl = '.' + mapInfos.tilePattern; // keep as-is if your current setup works
+
+  const tiles = new FixedMaxTileLayer(tileUrl, {
     tileSize: mapInfos.tileSize,
+    fixedZoom: mapInfos.maxZoom, // <-- always request MAX zoom tiles
     maxNativeZoom: mapInfos.maxZoom,
     maxZoom: mapInfos.maxZoom + 4,
-    noWrap: true
+    noWrap: true,
+    keepBuffer: 6,               // keep more tiles around to reduce reloads
+    updateWhenIdle: true,
+    updateWhenZooming: false
   }).addTo(map);
 
   map.setView(mapInfos.center, mapInfos.defaultZoom);
@@ -178,7 +211,7 @@
   const dmgAiRe =
   /^(?<time>\d{2}:\d{2}:\d{2})\s*\|\s*Player\s+"(?<victim>.+?)"\s*\(id=(?<vid>\d+)\s+pos=<\s*(?<vx>[-+\d.]+)\s*,\s*(?<vz>[-+\d.]+)\s*,\s*(?<vy>[-+\d.]+)\s*>\)\s*(?:\[\s*HP:\s*(?<hp>[-+\d.]+)\s*\]\s*)?hit by\s*(?<ai>.+?)\s*into\s*(?<part>[A-Za-z]+)\(\d+\)\s*for\s*(?<dmg>[-+\d.]+)\s*damage\s*\((?<attack>[^)]+)\)(?:\s*from\s*(?<dist>[-+\d.]+)\s*meters)?\s*$/i;
 
-  // ----------------- Size helpers (smaller at low zoom, grow gently) -----------------
+  // ----------------- Size helpers -----------------
   function dotRadius(){
     const z = map.getZoom();
     const base = 2;
@@ -388,10 +421,15 @@
     }
   }
 
+  // ----------------- Size helpers (dynamic with zoom) -----------------
+  function currentDotRadius(){ return Math.max(2, 2 + (map.getZoom() - mapInfos.minZoom) * 0.6); }
+  function currentLineWeight(){ return Math.max(1, 1 + (map.getZoom() - mapInfos.minZoom) * 0.35); }
+  function currentArrowSize(){ return Math.max(6, 4 + (map.getZoom() - mapInfos.minZoom) * 1.2); }
+
   // ----------------- Leaflet drawing helpers -----------------
   function addDot(pos, color, tooltipText){
     const latlng = worldToLatLng(pos);
-    const r = dotRadius();
+    const r = currentDotRadius();
     const m = L.circleMarker(latlng, {
       radius: r, color: '#fff', weight: 1.5, fillColor: color, fillOpacity: 1
     }).addTo(dotsLayer);
@@ -400,80 +438,59 @@
     m.on('mouseout',  hideTooltip);
   }
 
-  // Line with arrow that DOES NOT run under the dots:
-  // We offset both the start and the end by the current dot radius (plus a tiny gap),
-  // and we build the arrowhead beyond the end offset.
+  // Arrowed line, offset away from dots
   function addArrowLine(p0, p1, color){
     const z0 = worldToLatLng(p0);
     const z1 = worldToLatLng(p1);
-    const w = lineWeight();
+    const w = currentLineWeight();
 
-    // Pixel-space math
     const p0px = map.latLngToLayerPoint(z0);
     const p1px = map.latLngToLayerPoint(z1);
 
     const dx = p1px.x - p0px.x, dy = p1px.y - p0px.y;
     const len = Math.hypot(dx, dy) || 1;
-    const ux = dx / len, uy = dy / len; // unit direction
-    const px = -uy, py = ux;            // unit perpendicular
+    const ux = dx / len, uy = dy / len;
+    const px = -uy, py = ux;
 
-    const r = dotRadius();
-    const gap = Math.max(2, r + 2);     // keep line away from the dot rim
+    const r = currentDotRadius();
+    const gap = Math.max(2, r + 2);
 
-    // Offset segment endpoints to avoid drawing under dots
     const startPx = L.point(p0px.x + ux * gap, p0px.y + uy * gap);
     const endPx   = L.point(p1px.x - ux * gap, p1px.y - uy * gap);
 
-    // Draw main segment
     L.polyline(
       [ map.layerPointToLatLng(startPx), map.layerPointToLatLng(endPx) ],
       { color: darkerColor(color), weight: w, opacity: 0.95 }
     ).addTo(tracksLayer);
 
-    // Arrow head beyond the end of the shortened line
-    const sPx = arrowPixelSize();
-    const tip   = L.point(endPx.x + ux * sPx, endPx.y + uy * sPx); // tip sits past the end-offset
-    const baseC = endPx;                                           // base at the end-offset
+    const sPx = currentArrowSize();
+    const tip   = L.point(endPx.x + ux * sPx, endPx.y + uy * sPx);
+    const baseC = endPx;
     const left  = L.point(baseC.x + px * (sPx * 0.55), baseC.y + py * (sPx * 0.55));
     const right = L.point(baseC.x - px * (sPx * 0.55), baseC.y - py * (sPx * 0.55));
+    const triLL = [ map.layerPointToLatLng(tip), map.layerPointToLatLng(left), map.layerPointToLatLng(right) ];
 
-    const triLL = [
-      map.layerPointToLatLng(tip),
-      map.layerPointToLatLng(left),
-      map.layerPointToLatLng(right)
-    ];
-
-    // Outline + fill for visibility
-    L.polygon(triLL, { color: '#fff', weight: Math.max(1, w * 0.9), fillColor: '#fff', fillOpacity: 1 })
-      .addTo(tracksLayer);
+    L.polygon(triLL, { color: '#fff', weight: Math.max(1, w * 0.9), fillColor: '#fff', fillOpacity: 1 }).addTo(tracksLayer);
     const headColor = darkerColor(color);
-    L.polygon(triLL, { color: headColor, weight: Math.max(1, w * 0.7), fillColor: headColor, fillOpacity: 1 })
-      .addTo(tracksLayer);
+    L.polygon(triLL, { color: headColor, weight: Math.max(1, w * 0.7), fillColor: headColor, fillOpacity: 1 }).addTo(tracksLayer);
   }
 
-  // Kill "X" (with white outline)
+  // Kill "X"
   function addKillX(center, color, weight){
     const arm = 40;
     const c = worldToLatLng(center);
-
-    const a1w = L.polyline([
-      L.latLng(c.lat - arm, c.lng - arm), L.latLng(c.lat + arm, c.lng + arm)
-    ], { color:'#fff', weight:(weight??6)*1.6 }).addTo(killsLayer);
-    const a1  = L.polyline([
-      L.latLng(c.lat - arm, c.lng - arm), L.latLng(c.lat + arm, c.lng + arm)
-    ], { color,       weight:(weight??6) }).addTo(killsLayer);
-
-    const a2w = L.polyline([
-      L.latLng(c.lat + arm, c.lng - arm), L.latLng(c.lat - arm, c.lng + arm)
-    ], { color:'#fff', weight:(weight??6)*1.6 }).addTo(killsLayer);
-    const a2  = L.polyline([
-      L.latLng(c.lat + arm, c.lng - arm), L.latLng(c.lat - arm, c.lng + arm)
-    ], { color,       weight:(weight??6) }).addTo(killsLayer);
-
+    const a1w = L.polyline([ L.latLng(c.lat - arm, c.lng - arm), L.latLng(c.lat + arm, c.lng + arm) ],
+      { color:'#fff', weight:(weight??6)*1.6 }).addTo(killsLayer);
+    const a1  = L.polyline([ L.latLng(c.lat - arm, c.lng - arm), L.latLng(c.lat + arm, c.lng + arm) ],
+      { color,       weight:(weight??6) }).addTo(killsLayer);
+    const a2w = L.polyline([ L.latLng(c.lat + arm, c.lng - arm), L.latLng(c.lat - arm, c.lng + arm) ],
+      { color:'#fff', weight:(weight??6)*1.6 }).addTo(killsLayer);
+    const a2  = L.polyline([ L.latLng(c.lat + arm, c.lng - arm), L.latLng(c.lat - arm, c.lng + arm) ],
+      { color,       weight:(weight??6) }).addTo(killsLayer);
     return L.layerGroup([a1w,a1,a2w,a2]);
   }
 
-  // 8-point burst (impact star) with outline
+  // 8-point burst
   function addBurst(center, color, weight){
     const c = worldToLatLng(center);
     const rOuter = 50, rInner = rOuter*0.45, spikes=8;
@@ -491,10 +508,7 @@
   // Role markers with position in tooltip
   function addDiamond(center, color, size, name){
     const c=worldToLatLng(center), r=size??40;
-    const pts=[ L.latLng(c.lat - r, c.lng),
-                L.latLng(c.lat, c.lng + r),
-                L.latLng(c.lat + r, c.lng),
-                L.latLng(c.lat, c.lng - r) ];
+    const pts=[ L.latLng(c.lat - r, c.lng), L.latLng(c.lat, c.lng + r), L.latLng(c.lat + r, c.lng), L.latLng(c.lat, c.lng - r) ];
     const poly=L.polygon(pts,{color:'#fff',weight:4,fillColor:color,fillOpacity:1}).addTo(highlightsLayer);
     const label=`${name} (Victim)\nX:${center.x.toFixed(1)} Z:${center.z.toFixed(1)} Y:${center.y.toFixed(1)}`;
     poly.on('mouseover', e=>showTooltip(e.originalEvent.pageX,e.originalEvent.pageY,label));
@@ -598,7 +612,7 @@
     }
   }
 
-  // Re-render on zoom so sizes and offsets adjust correctly
+  // Re-render on zoom so sizes/offsets adjust correctly
   map.on('zoomend', renderRange);
 
   // ----------------- Fit to data -----------------
